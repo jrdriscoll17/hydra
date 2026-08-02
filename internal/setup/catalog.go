@@ -103,6 +103,19 @@ func catalog() []Component {
 			Paths:   []string{".config/quickshell"},
 		},
 		{
+			// Ahead of the theme component deliberately: `theme apply` writes
+			// hyprpaper.conf pointing into ~/.config/hypr/wallpapers, so that
+			// link has to exist first or the first render names a file that is
+			// not there and the desktop comes up with no wallpaper.
+			Key:     "wallpapers",
+			Name:    "Wallpapers",
+			Desc:    "clone the wallpapers repo and link it where the switcher looks",
+			Default: true,
+			Post: []Step{
+				{Name: "clone + link wallpapers", Check: wallpapersLinked, Run: linkWallpapers},
+			},
+		},
+		{
 			Key:     "theme",
 			Name:    "Theme switcher",
 			Desc:    "GTK/Qt/Kvantum theming — required by kitty's include",
@@ -165,15 +178,6 @@ func catalog() []Component {
 			Default:  false,
 			Packages: []string{"mpv"},
 			AUR:      []string{"plex-mpv-shim"},
-		},
-		{
-			Key:     "wallpapers",
-			Name:    "Wallpapers",
-			Desc:    "clone the wallpapers repo and link it where the switcher looks",
-			Default: true,
-			Post: []Step{
-				{Name: "clone + link wallpapers", Check: wallpapersLinked, Run: linkWallpapers},
-			},
 		},
 	}
 }

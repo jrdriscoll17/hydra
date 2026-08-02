@@ -198,3 +198,70 @@ func TestThemeRendered(t *testing.T) {
 		}
 	})
 }
+
+func TestHTTPSURL(t *testing.T) {
+	cases := []struct{ in, want string }{
+		{"git@github.com:jrdriscoll17/wallpapers.git", "https://github.com/jrdriscoll17/wallpapers.git"},
+		{"git@github.com:jrdriscoll17/dotfiles.git", "https://github.com/jrdriscoll17/dotfiles.git"},
+		{"git@gitlab.com:group/proj.git", "https://gitlab.com/group/proj.git"},
+		// Already HTTPS, or not an scp-style URL: nothing to rewrite.
+		{"https://github.com/x/y.git", ""},
+		{"git@github.com", ""},
+		{"git@:no-host.git", ""},
+		{"", ""},
+	}
+	for _, c := range cases {
+		if got := httpsURL(c.in); got != c.want {
+			t.Errorf("httpsURL(%q) = %q, want %q", c.in, got, c.want)
+		}
+	}
+}
+
+// The repos are public, so a machine with no GitHub key still gets its
+// wallpapers rather than the step failing and the desktop coming up bare.
+func TestCloneWithFallbackUsesHTTPSWhenSSHFails(t *testing.T) {
+	dir := t.TempDir()
+	// A git that refuses ssh remotes and "clones" https ones by making the dir.
+	script := "#!/bin/sh\n" +
+		"# args: clone <remote> <dst>\n" +
+		"case \"$2\" in\n" +
+		"  git@*) echo 'Permission denied (publickey).' >&2; mkdir -p \"$3\"; exit 128 ;;\n" +
+		"  https://*) mkdir -p \"$3\" && echo cloned > \"$3/marker\" ; exit 0 ;;\n" +
+		"esac\nexit 1\n"
+	if err := os.WriteFile(filepath.Join(dir, "git"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	dst := filepath.Join(t.TempDir(), "wallpapers")
+	if err := cloneWithFallback("git@github.com:jrdriscoll17/wallpapers.git", dst); err != nil {
+		t.Fatalf("cloneWithFallback: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dst, "marker")); err != nil {
+		t.Errorf("the https fallback did not run: %v", err)
+	}
+}
+
+// A failed ssh clone can leave a partial directory behind; the retry must not
+// trip over it.
+func TestCloneWithFallbackClearsAPartialClone(t *testing.T) {
+	dir := t.TempDir()
+	script := "#!/bin/sh\n" +
+		"case \"$2\" in\n" +
+		"  git@*) mkdir -p \"$3\"; touch \"$3/partial\"; exit 128 ;;\n" +
+		"  https://*) [ -e \"$3\" ] && { echo 'dst exists' >&2; exit 128; }; " +
+		"mkdir -p \"$3\"; echo ok > \"$3/marker\"; exit 0 ;;\n" +
+		"esac\nexit 1\n"
+	if err := os.WriteFile(filepath.Join(dir, "git"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	dst := filepath.Join(t.TempDir(), "wallpapers")
+	if err := cloneWithFallback("git@github.com:x/y.git", dst); err != nil {
+		t.Fatalf("cloneWithFallback: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dst, "partial")); err == nil {
+		t.Error("the partial ssh clone survived into the retry")
+	}
+}

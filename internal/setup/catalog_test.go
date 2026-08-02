@@ -231,3 +231,23 @@ func TestCatalogPackagesExistInTheRepos(t *testing.T) {
 		}
 	}
 }
+
+// `theme apply` writes hyprpaper.conf pointing into ~/.config/hypr/wallpapers,
+// so that link has to be in place before the theme renders — otherwise the
+// first render names a file that does not exist and the desktop comes up with
+// no wallpaper.
+func TestWallpapersAreLinkedBeforeTheThemeRenders(t *testing.T) {
+	all := catalog()
+	index := func(key string) int {
+		return slices.IndexFunc(all, func(c Component) bool { return c.Key == key })
+	}
+
+	wallpapers, theme := index("wallpapers"), index("theme")
+	if wallpapers < 0 || theme < 0 {
+		t.Fatal("catalog is missing the wallpapers or theme component")
+	}
+	if wallpapers > theme {
+		t.Errorf("wallpapers is at position %d, after theme at %d — the theme "+
+			"would render a wallpaper path that does not exist yet", wallpapers, theme)
+	}
+}

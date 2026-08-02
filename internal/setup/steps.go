@@ -1,8 +1,10 @@
 package setup
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/jrdriscoll17/hydra/internal/sys"
 	"github.com/jrdriscoll17/hydra/internal/theme"
@@ -13,6 +15,44 @@ import (
 // what is genuinely absent.
 
 const wallpapersRepo = "git@github.com:jrdriscoll17/wallpapers.git"
+
+// httpsURL rewrites an SSH remote to its HTTPS equivalent:
+// git@github.com:user/repo.git -> https://github.com/user/repo.git
+// Returns "" for anything that is not an scp-style SSH URL.
+func httpsURL(remote string) string {
+	rest, ok := strings.CutPrefix(remote, "git@")
+	if !ok {
+		return ""
+	}
+	host, path, ok := strings.Cut(rest, ":")
+	if !ok || host == "" || path == "" {
+		return ""
+	}
+	return "https://" + host + "/" + path
+}
+
+// cloneWithFallback clones over SSH, then over HTTPS if that fails.
+//
+// A machine set up from scratch usually has no GitHub key yet, and these repos
+// are public — so falling back means the wallpapers arrive anyway instead of
+// the step failing and the desktop coming up bare. The SSH remote is tried
+// first so a machine that does have a key keeps a pushable remote.
+func cloneWithFallback(remote, dst string) error {
+	err := sys.Run("git", "clone", remote, dst)
+	if err == nil {
+		return nil
+	}
+
+	alt := httpsURL(remote)
+	if alt == "" {
+		return err
+	}
+	fmt.Println(dimStyle.Render("    ssh clone failed, retrying over https..."))
+	// A failed clone can leave a partial directory behind, which would make
+	// the retry fail for the wrong reason.
+	os.RemoveAll(dst)
+	return sys.Run("git", "clone", alt, dst)
+}
 
 func tpmInstalled() bool { return sys.Exists(sys.InHome(".tmux/plugins/tpm")) }
 
@@ -77,7 +117,7 @@ func wallpapersLinked() bool {
 func linkWallpapers() error {
 	dst := sys.InHome("wallpapers")
 	if !sys.Exists(dst) {
-		if err := sys.Run("git", "clone", wallpapersRepo, dst); err != nil {
+		if err := cloneWithFallback(wallpapersRepo, dst); err != nil {
 			return err
 		}
 	}
