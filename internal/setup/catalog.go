@@ -109,6 +109,11 @@ func catalog() []Component {
 			Default: true,
 			Packages: []string{
 				"glib2", "kvantum", "qt5ct", "qt6ct", "gtk3", "gtk4",
+				// Colloid's install.sh compiles its stylesheets with sassc and
+				// needs the murrine engine at runtime. Without sassc it still
+				// creates the theme directory but leaves out every gtk.css,
+				// which reads as "installed" and styles nothing.
+				"sassc", "gtk-engine-murrine", "gnome-themes-extra",
 			},
 			// kvantumBase points at this theme's SVG, which renderQt copies
 			// per palette; render_qt silently no-ops without it.

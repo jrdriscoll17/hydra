@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/jrdriscoll17/hydra/internal/recolor"
@@ -80,14 +81,23 @@ func installThemeBase() error {
 	return sys.Run("cp", "-a", filepath.Join(tmp, mbIcons), sys.InHome(".local/share/icons/"))
 }
 
+// colloidBuilt reports whether a Colloid theme is actually usable, which means
+// the gtk4 sheet renderGTK symlinks is there. The directory alone is not
+// enough: install.sh creates it before compiling, so a run without sassc leaves
+// a complete-looking tree with no stylesheet in it, and renderGTK then silently
+// links nothing.
+func colloidBuilt(name string) bool {
+	return sys.Exists(sys.InHome(".themes/" + name + "/gtk-4.0/gtk.css"))
+}
+
 // colloidVariants returns the gtk4 theme names the palettes ask for that are
-// not installed yet.
+// not usable yet.
 func colloidVariants() []string {
 	seen := map[string]bool{}
 	var want []string
 	for _, p := range palettes() {
 		n := p.GTK.GTK4
-		if n == "" || seen[n] || sys.Exists(sys.InHome(".themes/"+n)) {
+		if n == "" || seen[n] || colloidBuilt(n) {
 			continue
 		}
 		seen[n] = true
@@ -98,8 +108,64 @@ func colloidVariants() []string {
 
 func colloidInstalled() bool { return len(colloidVariants()) == 0 }
 
-// installColloid maps a theme directory name back to install.sh flags:
-// Colloid-Green-Dark-Everforest -> -t green -c dark --tweaks everforest.
+// Colloid's install.sh builds a directory name by concatenating four optional
+// suffixes in a fixed order, each drawn from its own list, with the default
+// member of every list contributing nothing:
+//
+//	Colloid [-Accent] [-Colour] [-Size] [-Scheme]
+//
+// So the segments have to be matched against those lists rather than read
+// positionally — "Colloid-Dark" is a colour with the default accent, while
+// "Colloid-Green" is an accent with the default colour.
+var (
+	colloidColours = []string{"light", "dark"}
+	colloidSizes   = []string{"compact"}
+	colloidSchemes = []string{"nord", "dracula", "gruvbox", "everforest", "catppuccin"}
+)
+
+// colloidFlags maps a theme directory name back to install.sh flags:
+//
+//	Colloid-Green-Dark-Everforest -> -t green -c dark --tweaks everforest
+//	Colloid-Dark                  -> -c dark
+//	Colloid-Green                 -> -t green -c standard
+//
+// Reports false only for a name that is not a Colloid theme at all.
+func colloidFlags(name string) ([]string, bool) {
+	parts := strings.Split(name, "-")
+	if len(parts) < 2 || parts[0] != "Colloid" {
+		return nil, false
+	}
+
+	accent, colour, size := "", "standard", ""
+	var schemes []string
+	for _, raw := range parts[1:] {
+		seg := strings.ToLower(raw)
+		switch {
+		case slices.Contains(colloidColours, seg):
+			colour = seg
+		case slices.Contains(colloidSizes, seg):
+			size = seg
+		case slices.Contains(colloidSchemes, seg):
+			schemes = append(schemes, seg)
+		case accent == "":
+			accent = seg
+		}
+	}
+
+	var flags []string
+	if accent != "" {
+		flags = append(flags, "-t", accent)
+	}
+	flags = append(flags, "-c", colour)
+	if size != "" {
+		flags = append(flags, "-s", size)
+	}
+	for _, s := range schemes {
+		flags = append(flags, "--tweaks", s)
+	}
+	return flags, true
+}
+
 func installColloid() error {
 	variants := colloidVariants()
 	if len(variants) == 0 {
@@ -120,20 +186,15 @@ func installColloid() error {
 	}
 
 	for _, v := range variants {
-		parts := strings.Split(v, "-")
-		if len(parts) < 3 || parts[0] != "Colloid" {
+		flags, ok := colloidFlags(v)
+		if !ok {
 			fmt.Printf("    skipping %s: cannot derive install flags from the name\n", v)
 			continue
 		}
-		args := []string{
+		args := append([]string{
 			filepath.Join(tmp, "install.sh"),
 			"-d", sys.InHome(".themes"),
-			"-t", strings.ToLower(parts[1]),
-			"-c", strings.ToLower(parts[2]),
-		}
-		if len(parts) > 3 {
-			args = append(args, "--tweaks", strings.ToLower(parts[3]))
-		}
+		}, flags...)
 		if err := sys.Run("bash", args...); err != nil {
 			return fmt.Errorf("installing %s: %w", v, err)
 		}
