@@ -72,6 +72,29 @@ switcher instead of the installer, so both ship as one artefact. Quickshell exec
 `theme data`, which is why that symlink has to be on `PATH`; `hydra init` creates
 it.
 
+## Tests
+
+```sh
+make test
+```
+
+Everything runs against a temporary `HOME` and a fixture palette, so the suite
+never touches the machine it runs on and needs no Arch, no chezmoi and no
+desktop. The parts that genuinely shell out — pacman, sudo, git clone, the
+prompts — are the uncovered remainder.
+
+Two things are worth knowing before changing code here:
+
+- **The generated configs are golden files.** `internal/theme/testdata` holds
+  the exact bytes each renderer produces for a fixture palette, because other
+  programs parse those files and several are diffed against the config repo. A
+  failing golden means a generated config changed shape. Look at the diff, then
+  `make golden` to re-bless it.
+- **The colour maths is pinned to Python.** The reference values in
+  `internal/recolor` come from `colorsys` and `round()`, which is what
+  `recolor.py` used, down to round-half-to-even. They are what keeps a rebuilt
+  theme byte-identical to the one that came before it.
+
 ## Assumptions
 
 This is a personal tool and does not pretend otherwise. It assumes Arch (pacman,

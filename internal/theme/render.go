@@ -355,7 +355,9 @@ func renderGTK(t *Theme) error {
 	return nil
 }
 
-const kvantumBase = "/usr/share/Kvantum/Nordic-Darker-Solid"
+// A var rather than a const only so tests can point it at a fixture; nothing
+// in the program reassigns it.
+var kvantumBase = "/usr/share/Kvantum/Nordic-Darker-Solid"
 
 var generalColorsRe = regexp.MustCompile(`(?s)\[GeneralColors\]\n[^\[]*`)
 

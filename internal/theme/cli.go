@@ -129,6 +129,10 @@ func reloadAll(t *Theme) {
 	}
 }
 
+// reload is indirected so tests can render without poking the live desktop —
+// reloadAll drives gsettings and hyprctl, which are real, global side effects.
+var reload = reloadAll
+
 func Apply(name string, quiet bool) error {
 	t, err := Load(name)
 	if err != nil {
@@ -142,7 +146,7 @@ func Apply(name string, quiet bool) error {
 	if err := sys.WriteFile(stateFile(), name+"\n"); err != nil {
 		return err
 	}
-	reloadAll(t)
+	reload(t)
 	if !quiet {
 		fmt.Printf("theme: %s\n", t.Label)
 	}

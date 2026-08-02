@@ -11,10 +11,14 @@ import (
 
 // -- host detection ----------------------------------------------------------
 
+// A var rather than a const only so tests can point it at a fixture; nothing
+// in the program reassigns it.
+var powerSupplyDir = "/sys/class/power_supply"
+
 // isLaptop reports whether this machine has a battery. This is the same signal
 // the configs should use at runtime rather than hardcoding a hostname.
 func isLaptop() bool {
-	entries, err := os.ReadDir("/sys/class/power_supply")
+	entries, err := os.ReadDir(powerSupplyDir)
 	if err != nil {
 		return false
 	}
@@ -96,13 +100,19 @@ const (
 )
 
 // scan asks chezmoi what it would change, restricted to the given paths.
-// chezmoi status prints two status columns then the path; an "M" in either
-// means the target exists and differs, "A" means it would be created.
 func scan(paths []string) (map[string]FileState, error) {
 	out, err := sys.Capture("chezmoi", "status")
 	if err != nil {
 		return nil, err
 	}
+	return parseStatus(out, paths), nil
+}
+
+// parseStatus reads `chezmoi status` output. It prints two status columns then
+// the path; an "M" in either means the target exists and differs, "A" means it
+// would be created. Anything else (deletions, scripts) is not this tool's
+// business.
+func parseStatus(out string, paths []string) map[string]FileState {
 	states := map[string]FileState{}
 	for line := range strings.SplitSeq(out, "\n") {
 		if len(line) < 4 {
@@ -119,7 +129,7 @@ func scan(paths []string) (map[string]FileState, error) {
 			states[path] = StateNew
 		}
 	}
-	return states, nil
+	return states
 }
 
 // ownedBy reports whether a target path falls under any of the given roots.
