@@ -393,3 +393,82 @@ func TestLinkWallpapersClearsAFailedCloneAndRetries(t *testing.T) {
 		t.Error("wallpapersLinked = false after a successful retry")
 	}
 }
+
+// -- the wallpapers the palettes actually name -------------------------------
+
+// "Is there any image here?" was the wrong question. A checkout missing the one
+// file the live palette points at passed the check, reported itself done, and
+// left hyprpaper with nothing to show — while `hydra status` said in sync.
+func TestWallpapersLinkedChecksTheNamedFiles(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	palette(t, home, "ice", "Material-Black-IceBlue", "MB-IceBlue-Suru-GLOW", "", "#7fd8e8")
+
+	dir := filepath.Join(home, ".config/hypr/wallpapers")
+
+	// Some other wallpaper is present, but not the one the palette names.
+	writeFile(t, filepath.Join(dir, "something_else.jpg"), "jpeg")
+	if wallpapersLinked() {
+		t.Error("wallpapersLinked = true while the palette's own wallpaper is absent — " +
+			"this is what reported done with an empty hyprpaper.conf")
+	}
+	if got := missingWallpapers(); len(got) != 1 || got[0] != "w.jpg" {
+		t.Errorf("missingWallpapers = %v, want [w.jpg]", got)
+	}
+
+	// Now the named one arrives.
+	writeFile(t, filepath.Join(dir, "w.jpg"), "jpeg")
+	if !wallpapersLinked() {
+		t.Error("wallpapersLinked = false with every named wallpaper present")
+	}
+	if got := missingWallpapers(); len(got) != 0 {
+		t.Errorf("missingWallpapers = %v, want none", got)
+	}
+}
+
+// Every palette's wallpaper counts, not just the live one — switching theme
+// must not land on a missing file.
+func TestMissingWallpapersCoversEveryPalette(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	writeFile(t, filepath.Join(home, ".config/theme/themes/a.json"), paletteWith("a", "one.jpg"))
+	writeFile(t, filepath.Join(home, ".config/theme/themes/b.json"), paletteWith("b", "two.jpg"))
+	writeFile(t, filepath.Join(home, ".config/hypr/wallpapers/one.jpg"), "jpeg")
+
+	got := missingWallpapers()
+	if len(got) != 1 || got[0] != "two.jpg" {
+		t.Errorf("missingWallpapers = %v, want [two.jpg]", got)
+	}
+	if wallpapersLinked() {
+		t.Error("wallpapersLinked = true while another palette's wallpaper is absent")
+	}
+}
+
+// On a machine where the configs have not landed yet there are no palettes to
+// ask about, so the check must not report done and skip the clone.
+func TestWallpapersLinkedOnAFreshMachine(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	if wallpapersLinked() {
+		t.Error("wallpapersLinked = true on a machine with no palettes and no wallpapers")
+	}
+
+	writeFile(t, filepath.Join(home, ".config/hypr/wallpapers/anything.jpg"), "jpeg")
+	if !wallpapersLinked() {
+		t.Error("wallpapersLinked = false with wallpapers present and no palettes to check against")
+	}
+}
+
+func paletteWith(name, wallpaper string) string {
+	return `{
+  "name": "` + name + `",
+  "label": "` + name + `",
+  "blurb": "test",
+  "wallpaper": "` + wallpaper + `",
+  "colors": {"accent": "#111111"},
+  "term": {},
+  "gtk": {"theme": "T", "icons": "I", "kvantum": "K", "gtk4": ""},
+  "editors": {"doom": "d", "nvim": "n"}
+}`
+}

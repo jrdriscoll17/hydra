@@ -148,12 +148,50 @@ func salvageable(dir string) bool {
 	return true
 }
 
+// missingWallpapers lists the wallpapers the palettes name that are not on
+// disk.
+//
+// "Is there any image here?" was the wrong question, in the same way that
+// counting directory entries was before it: a checkout missing the one file the
+// live palette points at passed the check, reported itself done, and left the
+// desktop with an empty hyprpaper.conf. What matters is the specific files the
+// palettes ask for.
+func missingWallpapers() []string {
+	dir := sys.InHome(".config/hypr/wallpapers")
+	var missing []string
+	for _, p := range palettes() {
+		if p.Wallpaper == "" {
+			continue
+		}
+		if !sys.Exists(filepath.Join(dir, p.Wallpaper)) {
+			missing = append(missing, p.Wallpaper)
+		}
+	}
+	return missing
+}
+
 func wallpapersLinked() bool {
-	return hasWallpapers(sys.InHome(".config/hypr/wallpapers"))
+	// Before the configs are applied there are no palettes to ask about, so
+	// fall back to whether anything is there at all — otherwise a fresh machine
+	// would report this done and never clone.
+	if len(palettes()) == 0 {
+		return hasWallpapers(sys.InHome(".config/hypr/wallpapers"))
+	}
+	return len(missingWallpapers()) == 0
 }
 
 func linkWallpapers() error {
 	dst := sys.InHome("wallpapers")
+
+	// An existing checkout that is merely behind is worth a pull before
+	// anything more drastic — the palettes may name a wallpaper added after
+	// this machine cloned. Best effort: a failure here just falls through to
+	// the checks below.
+	if sys.Exists(filepath.Join(dst, ".git")) && len(missingWallpapers()) > 0 {
+		fmt.Println(dimStyle.Render("    wallpapers missing, pulling..."))
+		_ = sys.Run("git", "-C", dst, "pull", "--ff-only")
+	}
+
 	if !hasWallpapers(dst) {
 		// Only the wreckage of a previous attempt gets cleared; a directory
 		// with real content in it is left alone and reported.
@@ -191,5 +229,16 @@ func linkWallpapers() error {
 	if err := os.MkdirAll(filepath.Dir(link), 0o755); err != nil {
 		return err
 	}
-	return os.Symlink(dst, link)
+	if err := os.Symlink(dst, link); err != nil {
+		return err
+	}
+
+	// Name the files that are still absent rather than leaving the desktop to
+	// come up bare with nothing said. A palette can point at a wallpaper that
+	// was never committed, which no amount of re-cloning will fix.
+	if gone := missingWallpapers(); len(gone) > 0 {
+		return fmt.Errorf("still missing from %s: %s (a palette names it, but "+
+			"%s does not have it)", dst, strings.Join(gone, ", "), wallpapersRepo)
+	}
+	return nil
 }
