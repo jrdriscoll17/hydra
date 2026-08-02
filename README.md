@@ -43,8 +43,14 @@ steps that have to happen once the files land. Adding a component means adding a
 entry there and nothing else.
 
 Every action is checked before it runs, so a second run installs only what is
-missing. Components are opt-out, and are filtered by host — laptop-only and
-desktop-only entries appear based on whether a battery exists, not on a hostname.
+missing. The checks are about the machine's actual state, not a "have I run
+before" marker: the theme render, for instance, compares a fingerprint of this
+binary against the one that produced the output on disk, so upgrading hydra
+makes `hydra status` report the render as pending and `hydra sync` redo it
+without being asked.
+
+Components are opt-out, and are filtered by host — laptop-only and desktop-only
+entries appear based on whether a battery exists, not on a hostname.
 
 When a config already exists and differs from the repo, hydra stops and asks, per
 file: show the diff, keep yours, back yours up and take the repo's, or overwrite.
