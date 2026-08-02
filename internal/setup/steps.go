@@ -1,6 +1,7 @@
 package setup
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -72,7 +73,30 @@ func installFisher() error {
 	return sys.Run("fish", "-c", "fisher update")
 }
 
-func lazySynced() bool { return sys.Exists(sys.InHome(".local/share/nvim/lazy/lazy.nvim")) }
+// lazySynced reports whether every plugin the lockfile names is on disk.
+//
+// Checking for lazy.nvim's own directory was the wrong question: lazy
+// bootstraps itself before it installs anything, so a sync that died part-way
+// still left that directory behind and the step never ran again. That is how a
+// machine ended up with 24 of 27 plugins — including no colorscheme at all —
+// while reporting itself synced.
+func lazySynced() bool {
+	raw, err := os.ReadFile(sys.InHome(".config/nvim/lazy-lock.json"))
+	if err != nil {
+		// No lockfile to compare against; fall back to lazy's own presence.
+		return sys.Exists(sys.InHome(".local/share/nvim/lazy/lazy.nvim"))
+	}
+	var lock map[string]any
+	if err := json.Unmarshal(raw, &lock); err != nil || len(lock) == 0 {
+		return sys.Exists(sys.InHome(".local/share/nvim/lazy/lazy.nvim"))
+	}
+	for name := range lock {
+		if !sys.Exists(sys.InHome(".local/share/nvim/lazy/" + name)) {
+			return false
+		}
+	}
+	return true
+}
 
 func syncLazy() error {
 	return sys.Run("nvim", "--headless", "+Lazy! sync", "+qa")

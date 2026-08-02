@@ -57,28 +57,6 @@ func catalog() []Component {
 			},
 		},
 		{
-			Key:      "nvim",
-			Name:     "Neovim",
-			Desc:     "neovim + lazy.nvim plugin sync",
-			Default:  true,
-			Packages: []string{"neovim", "tree-sitter-cli"},
-			Paths:    []string{".config/nvim"},
-			Post: []Step{
-				{Name: "sync lazy.nvim plugins", Check: lazySynced, Run: syncLazy},
-			},
-		},
-		{
-			Key:      "emacs",
-			Name:     "Doom Emacs",
-			Desc:     "emacs + Doom installer — skip if you don't want it",
-			Default:  false,
-			Packages: []string{"emacs", "cmake", "libtool"},
-			Paths:    []string{".config/doom"},
-			Post: []Step{
-				{Name: "install Doom Emacs", Check: doomInstalled, Run: installDoom},
-			},
-		},
-		{
 			Key:      "terminal",
 			Name:     "Terminals",
 			Desc:     "kitty + alacritty",
@@ -150,6 +128,34 @@ func catalog() []Component {
 				{Name: "Colloid gtk4 themes", Check: colloidInstalled, Run: installColloid},
 				{Name: "derive per-palette GTK/icon themes", Check: paletteThemesBuilt, Run: buildPaletteThemes},
 				{Name: "render the active theme", Check: themeRendered, Run: applyTheme},
+			},
+		},
+		{
+			// After the theme component, because lua/plugins/colorscheme.lua
+			// does `require("theme")` on the generated lua/theme.lua. Sync the
+			// plugins before that file exists and the whole spec fails to load,
+			// so the colorschemes never install — while lazy itself does, which
+			// is what made the step look done.
+			Key:      "nvim",
+			Name:     "Neovim",
+			Desc:     "neovim + lazy.nvim plugin sync",
+			Default:  true,
+			Packages: []string{"neovim", "tree-sitter-cli"},
+			Paths:    []string{".config/nvim"},
+			Post: []Step{
+				{Name: "sync lazy.nvim plugins", Check: lazySynced, Run: syncLazy},
+			},
+		},
+		{
+			// Likewise: config.el loads the generated theme.el.
+			Key:      "emacs",
+			Name:     "Doom Emacs",
+			Desc:     "emacs + Doom installer — skip if you don't want it",
+			Default:  false,
+			Packages: []string{"emacs", "cmake", "libtool"},
+			Paths:    []string{".config/doom"},
+			Post: []Step{
+				{Name: "install Doom Emacs", Check: doomInstalled, Run: installDoom},
 			},
 		},
 		{

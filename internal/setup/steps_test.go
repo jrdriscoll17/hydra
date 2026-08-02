@@ -536,3 +536,72 @@ func paletteWith(name, wallpaper string) string {
   "editors": {"doom": "d", "nvim": "n"}
 }`
 }
+
+// -- lazy.nvim ---------------------------------------------------------------
+
+// lazy bootstraps its own directory before installing anything, so a sync that
+// died part-way left that behind and the step never ran again. That is how a
+// machine ended up with 24 of 27 plugins — no colorscheme among them — while
+// reporting itself synced.
+func TestLazySyncedComparesAgainstTheLockfile(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	writeFile(t, filepath.Join(home, ".config/nvim/lazy-lock.json"),
+		`{"lazy.nvim":{"commit":"a"},"nightfox.nvim":{"commit":"b"},"onedark":{"commit":"c"}}`)
+
+	// Only lazy itself is installed, which is exactly the state that used to
+	// pass.
+	mkdir(t, filepath.Join(home, ".local/share/nvim/lazy/lazy.nvim"))
+	if lazySynced() {
+		t.Error("lazySynced = true with only lazy.nvim installed and two plugins missing")
+	}
+
+	mkdir(t, filepath.Join(home, ".local/share/nvim/lazy/nightfox.nvim"))
+	if lazySynced() {
+		t.Error("lazySynced = true with one plugin still missing")
+	}
+
+	mkdir(t, filepath.Join(home, ".local/share/nvim/lazy/onedark"))
+	if !lazySynced() {
+		t.Error("lazySynced = false with every locked plugin present")
+	}
+}
+
+// Without a lockfile there is nothing to compare against, so fall back rather
+// than reporting the step pending forever.
+func TestLazySyncedWithoutALockfile(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	if lazySynced() {
+		t.Error("lazySynced = true on an empty HOME")
+	}
+	mkdir(t, filepath.Join(home, ".local/share/nvim/lazy/lazy.nvim"))
+	if !lazySynced() {
+		t.Error("lazySynced = false with lazy present and no lockfile to check")
+	}
+}
+
+func TestLazySyncedWithAnUnreadableLockfile(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	writeFile(t, filepath.Join(home, ".config/nvim/lazy-lock.json"), "{not json")
+	mkdir(t, filepath.Join(home, ".local/share/nvim/lazy/lazy.nvim"))
+
+	if !lazySynced() {
+		t.Error("lazySynced = false on a corrupt lockfile; it should fall back")
+	}
+}
+
+// The real lockfile must name plugins that are actually installed here, which
+// is the same check hydra will run on every other machine.
+func TestRealLazyLockMatchesThisMachine(t *testing.T) {
+	if _, err := os.Stat(filepath.Join(os.Getenv("HOME"), ".config/nvim/lazy-lock.json")); err != nil {
+		t.Skip("no lazy-lock.json on this machine")
+	}
+	if !lazySynced() {
+		t.Error("lazySynced = false on this machine — either a plugin in the " +
+			"lockfile is not installed, or the directory naming assumption is wrong")
+	}
+}

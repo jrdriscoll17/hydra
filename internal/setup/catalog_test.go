@@ -305,3 +305,33 @@ func TestCatalogInstallsWhatTheShellConfigAliases(t *testing.T) {
 		}
 	}
 }
+
+// Generated files that another component's bootstrap reads at load time.
+// lua/plugins/colorscheme.lua does require("theme") on the generated
+// lua/theme.lua, and config.el loads the generated theme.el — so syncing
+// plugins or installing Doom before the theme renders makes their configs fail
+// to load. On the laptop that left neovim with every plugin except the
+// colorschemes.
+func TestEditorsAreBootstrappedAfterTheThemeRenders(t *testing.T) {
+	all := catalog()
+	index := func(key string) int {
+		return slices.IndexFunc(all, func(c Component) bool { return c.Key == key })
+	}
+
+	theme := index("theme")
+	if theme < 0 {
+		t.Fatal("no theme component")
+	}
+	for _, key := range []string{"nvim", "emacs"} {
+		i := index(key)
+		if i < 0 {
+			t.Errorf("no %s component", key)
+			continue
+		}
+		if i < theme {
+			t.Errorf("%s is at position %d, before theme at %d — its config reads a "+
+				"file the theme render generates, so its bootstrap would run against "+
+				"a config that cannot load", key, i, theme)
+		}
+	}
+}

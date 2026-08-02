@@ -120,6 +120,8 @@ func Status() error {
 	printDetail("packages missing", append(drift.pacman, drift.aur...))
 	printDetail("config not yet on this machine", drift.fresh)
 	printDetail("config that differs from the repo", drift.conflicts)
+	printDetail("theme-owned lines, left alone (this machine's theme differs "+
+		"from the committed one)", drift.themed)
 	printDetail("bootstrap steps pending", pendingSteps(selected))
 
 	if drift.clean() && len(pendingSteps(selected)) == 0 {
@@ -173,6 +175,11 @@ func Sync() error {
 type drift struct {
 	pacman, aur      []string
 	fresh, conflicts []string
+
+	// themed are files whose only difference from the repo is a setting the
+	// theme switcher rewrites — expected on any machine running a theme other
+	// than whichever was committed, and not something to ask about.
+	themed []string
 }
 
 func (d drift) clean() bool {
@@ -202,8 +209,14 @@ func survey(selected []Component) (drift, error) {
 			d.fresh = append(d.fresh, p)
 		}
 	}
+	// Theme-owned drift is expected and self-correcting: the render at the end
+	// of the run rewrites those lines anyway, so applying the repo's version
+	// first would only undo and redo the same edit.
+	d.conflicts, d.themed = splitThemeDrift(d.conflicts)
+
 	sort.Strings(d.conflicts)
 	sort.Strings(d.fresh)
+	sort.Strings(d.themed)
 	return d, nil
 }
 
