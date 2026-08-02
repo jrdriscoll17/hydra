@@ -44,6 +44,11 @@ func catalog() []Component {
 			Default: true,
 			Packages: []string{
 				"fish", "tmux", "git", "fzf", "ripgrep", "fd", "less", "wl-clipboard",
+				// config.fish aliases these. They are present on the desktop
+				// because CachyOS ships them, so their absence only showed up on
+				// a machine built from scratch — where `ls` is aliased to eza
+				// and simply stopped working.
+				"eza", "expac", "hwinfo", "wget",
 			},
 			Paths: []string{".config/fish", ".tmux.conf", ".config/git", ".gitconfig"},
 			Post: []Step{

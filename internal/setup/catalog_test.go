@@ -1,7 +1,10 @@
 package setup
 
 import (
+	"os"
 	"os/exec"
+	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 	"testing"
@@ -249,5 +252,56 @@ func TestWallpapersAreLinkedBeforeTheThemeRenders(t *testing.T) {
 	if wallpapers > theme {
 		t.Errorf("wallpapers is at position %d, after theme at %d — the theme "+
 			"would render a wallpaper path that does not exist yet", wallpapers, theme)
+	}
+}
+
+// Commands the shell config aliases, which the catalog therefore has to
+// install. These kept being discovered one at a time on the laptop: they are
+// all present on the desktop because CachyOS ships them, so nothing here
+// noticed they were never installed — `ls` is aliased to eza, and on a machine
+// built from scratch it simply stopped working.
+//
+// Base-system packages (coreutils, grep, systemd…) are deliberately not
+// listed: they are guaranteed present and adding them would be noise.
+func TestCatalogInstallsWhatTheShellConfigAliases(t *testing.T) {
+	config := filepath.Join(os.Getenv("HOME"), "dotfiles/dot_config/fish/config.fish")
+	raw, err := os.ReadFile(config)
+	if err != nil {
+		t.Skipf("no config repo at %s", config)
+	}
+
+	// Binary -> package providing it, for the non-base commands this config
+	// leans on.
+	provides := map[string]string{
+		"eza":       "eza",
+		"expac":     "expac",
+		"hwinfo":    "hwinfo",
+		"wget":      "wget",
+		"fzf":       "fzf",
+		"rg":        "ripgrep",
+		"fd":        "fd",
+		"btop":      "btop",
+		"nvim":      "neovim",
+		"playerctl": "playerctl",
+	}
+
+	installed := map[string]bool{}
+	for _, c := range catalog() {
+		for _, p := range append(slices.Clone(c.Packages), c.AUR...) {
+			installed[p] = true
+		}
+	}
+
+	alias := regexp.MustCompile(`(?m)^alias\s+[a-zA-Z._-]+=['"]?([a-zA-Z0-9_-]+)`)
+	for _, m := range alias.FindAllStringSubmatch(string(raw), -1) {
+		pkg, tracked := provides[m[1]]
+		if !tracked {
+			continue // base system, or a shell builtin
+		}
+		if !installed[pkg] {
+			t.Errorf("config.fish aliases %q but no component installs %q — "+
+				"the alias breaks on a machine that does not already have it",
+				m[1], pkg)
+		}
 	}
 }
