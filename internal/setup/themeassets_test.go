@@ -332,6 +332,11 @@ func TestColloidVariantsRejectsADirectoryWithNoStylesheet(t *testing.T) {
 
 // The theme component has to install what Colloid's installer needs, or the
 // step above fails silently on a fresh machine.
+//
+// sassc is the whole list. Colloid's README also asks for gtk-engine-murrine
+// and gnome-themes-extra, but both are GTK2 engines and hydra takes only
+// gtk-4.0/gtk.css from Colloid — and murrine is not even in the Arch repos any
+// more, so listing it aborted the entire pacman transaction.
 func TestThemeComponentInstallsColloidBuildDependencies(t *testing.T) {
 	var pkgs []string
 	for _, c := range catalog() {
@@ -339,10 +344,14 @@ func TestThemeComponentInstallsColloidBuildDependencies(t *testing.T) {
 			pkgs = c.Packages
 		}
 	}
-	for _, need := range []string{"sassc", "gtk-engine-murrine"} {
-		if !slices.Contains(pkgs, need) {
-			t.Errorf("the theme component does not install %q, which Colloid's "+
-				"install.sh needs; without it the gtk4 themes build empty", need)
+	if !slices.Contains(pkgs, "sassc") {
+		t.Error("the theme component does not install sassc, which Colloid's " +
+			"install.sh needs; without it the gtk4 themes build empty")
+	}
+	for _, gtk2Only := range []string{"gtk-engine-murrine", "gnome-themes-extra"} {
+		if slices.Contains(pkgs, gtk2Only) {
+			t.Errorf("the theme component installs %q, which is only needed for "+
+				"Colloid's GTK2 support that hydra never uses", gtk2Only)
 		}
 	}
 }

@@ -440,3 +440,49 @@ func TestScanErrorExplainsItself(t *testing.T) {
 		t.Errorf("error %q does not tell the user what to do about it", err)
 	}
 }
+
+// One unresolvable package must not stop the rest installing. `pacman -S`
+// fails the whole transaction on a single unknown target, so a name that
+// upstream has renamed or moved to the AUR would otherwise leave a fresh
+// machine with nothing installed — after the user had already authenticated.
+func TestInstallPackagesSkipsUnknownOnes(t *testing.T) {
+	if !sys.Have("pacman") {
+		t.Skip("no pacman on this machine")
+	}
+
+	// No sudo on PATH, so the install itself cannot run; what is under test is
+	// that the unknown name is reported and does not abort the attempt.
+	dir := t.TempDir()
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	out := quiet(t, func() {
+		_ = installPackages([]string{"hydra-not-a-real-package"})
+	})
+	if !strings.Contains(out, "hydra-not-a-real-package") {
+		t.Errorf("the unresolvable package was not reported:\n%s", out)
+	}
+}
+
+// With nothing resolvable there is nothing to do, so it must not shell out to
+// sudo at all — that would prompt for a password to install an empty list.
+func TestInstallPackagesDoesNothingWhenAllAreUnknown(t *testing.T) {
+	if !sys.Have("pacman") {
+		t.Skip("no pacman on this machine")
+	}
+	// A sudo that fails loudly if it is called.
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "sudo"),
+		[]byte("#!/bin/sh\necho SUDO-WAS-CALLED\nexit 1\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	out := quiet(t, func() {
+		if err := installPackages([]string{"hydra-not-a-real-package"}); err != nil {
+			t.Errorf("installPackages = %v, want nil when there is nothing to install", err)
+		}
+	})
+	if strings.Contains(out, "SUDO-WAS-CALLED") {
+		t.Error("sudo was invoked with an empty package list")
+	}
+}

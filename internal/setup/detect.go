@@ -62,12 +62,42 @@ func aurHelper() string {
 	return ""
 }
 
+// pkgKnown reports whether pacman can resolve a package name at all.
+func pkgKnown(name string) bool {
+	return exec.Command("pacman", "-Si", name).Run() == nil
+}
+
+// installPackages installs what pacman can resolve, and says loudly what it
+// could not.
+//
+// `pacman -S` fails the entire transaction on a single unknown target, so one
+// package that upstream has since renamed or moved to the AUR would otherwise
+// stop a fresh machine installing anything at all — and only after the user has
+// entered their password. Everything else is still worth having.
 func installPackages(pkgs []string) error {
 	if len(pkgs) == 0 {
 		return nil
 	}
-	args := append([]string{"pacman", "-S", "--needed"}, pkgs...)
-	return sys.Run("sudo", args...)
+
+	var known, unknown []string
+	for _, p := range pkgs {
+		if pkgKnown(p) {
+			known = append(known, p)
+		} else {
+			unknown = append(unknown, p)
+		}
+	}
+
+	if len(unknown) > 0 {
+		fmt.Println(warnStyle.Render("  not in the repos, skipping: " +
+			strings.Join(unknown, " ")))
+		fmt.Println(dimStyle.Render(
+			"  (renamed, dropped, or moved to the AUR — install by hand if you want them)"))
+	}
+	if len(known) == 0 {
+		return nil
+	}
+	return sys.Run("sudo", append([]string{"pacman", "-S", "--needed"}, known...)...)
 }
 
 func installAUR(pkgs []string) error {

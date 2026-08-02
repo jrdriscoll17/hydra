@@ -1,9 +1,12 @@
 package setup
 
 import (
+	"os/exec"
 	"slices"
 	"strings"
 	"testing"
+
+	"github.com/jrdriscoll17/hydra/internal/sys"
 )
 
 // The catalog is the whole content of the tool, so its invariants are worth
@@ -200,5 +203,31 @@ func TestNames(t *testing.T) {
 	}
 	if got := names(nil); got != nil {
 		t.Errorf("names(nil) = %v, want nil", got)
+	}
+}
+
+// Every repo package in the catalog has to actually exist, because
+// `pacman -S` fails the whole transaction on one unknown target — so a single
+// stale name stops a fresh machine installing anything at all, after the user
+// has already entered their password.
+//
+// This is exactly how "target not found: gtk-engine-murrine" got shipped: the
+// name came off a project's README, which listed it for a distro rather than
+// this one.
+func TestCatalogPackagesExistInTheRepos(t *testing.T) {
+	if !sys.Have("pacman") {
+		t.Skip("no pacman on this machine")
+	}
+	if err := exec.Command("pacman", "-Si", "bash").Run(); err != nil {
+		t.Skip("no usable pacman sync database")
+	}
+
+	for _, c := range catalog() {
+		for _, p := range c.Packages {
+			if err := exec.Command("pacman", "-Si", p).Run(); err != nil {
+				t.Errorf("%s lists package %q, which is not in the repos — "+
+					"`pacman -S` would abort the whole transaction", c.Key, p)
+			}
+		}
 	}
 }

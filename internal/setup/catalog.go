@@ -109,11 +109,13 @@ func catalog() []Component {
 			Default: true,
 			Packages: []string{
 				"glib2", "kvantum", "qt5ct", "qt6ct", "gtk3", "gtk4",
-				// Colloid's install.sh compiles its stylesheets with sassc and
-				// needs the murrine engine at runtime. Without sassc it still
-				// creates the theme directory but leaves out every gtk.css,
-				// which reads as "installed" and styles nothing.
-				"sassc", "gtk-engine-murrine", "gnome-themes-extra",
+				// Colloid's install.sh compiles its stylesheets with sassc.
+				// Without it the theme directory is still created but every
+				// gtk.css is missing, which reads as "installed" and styles
+				// nothing. Its other listed requirements are GTK2-only
+				// (murrine, gnome-themes-extra) and hydra takes only the gtk4
+				// sheet from Colloid, so they are deliberately not pulled in.
+				"sassc",
 			},
 			// kvantumBase points at this theme's SVG, which renderQt copies
 			// per palette; render_qt silently no-ops without it.
