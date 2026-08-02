@@ -265,3 +265,131 @@ func TestCloneWithFallbackClearsAPartialClone(t *testing.T) {
 		t.Error("the partial ssh clone survived into the retry")
 	}
 }
+
+// -- wallpaper presence ------------------------------------------------------
+
+// The bug this pins: a clone that failed part-way leaves a lone .git behind,
+// and counting directory entries read that as success. `hydra status` then
+// reported "in sync" while the desktop had no wallpaper and nothing said why.
+func TestHasWallpapers(t *testing.T) {
+	cases := []struct {
+		name  string
+		files []string
+		dirs  []string
+		want  bool
+	}{
+		{name: "real wallpapers", files: []string{"forest_mist.jpg"}, want: true},
+		{name: "png", files: []string{"a.png"}, want: true},
+		{name: "mixed case extension", files: []string{"A.JPG"}, want: true},
+		{name: "empty", want: false},
+		{name: "only a .git directory", dirs: []string{".git"}, want: false},
+		{name: "git plus a readme", files: []string{"README.md"}, dirs: []string{".git"}, want: false},
+		// The images live at the top level; a subdirectory of them is the
+		// repo's `original/` originals, not what the palettes point at.
+		{name: "images only in a subdirectory", dirs: []string{"original"}, want: false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			dir := t.TempDir()
+			for _, d := range c.dirs {
+				mkdir(t, filepath.Join(dir, d))
+			}
+			for _, f := range c.files {
+				writeFile(t, filepath.Join(dir, f), "x")
+			}
+			if got := hasWallpapers(dir); got != c.want {
+				t.Errorf("hasWallpapers = %v, want %v", got, c.want)
+			}
+		})
+	}
+
+	if hasWallpapers(filepath.Join(t.TempDir(), "missing")) {
+		t.Error("hasWallpapers = true for a directory that does not exist")
+	}
+}
+
+func TestSalvageable(t *testing.T) {
+	t.Run("empty", func(t *testing.T) {
+		if !salvageable(t.TempDir()) {
+			t.Error("an empty directory should be salvageable")
+		}
+	})
+
+	t.Run("only .git", func(t *testing.T) {
+		dir := t.TempDir()
+		mkdir(t, filepath.Join(dir, ".git"))
+		if !salvageable(dir) {
+			t.Error("a bare .git is the wreckage of a failed clone and should be salvageable")
+		}
+	})
+
+	// Anything else might be the user's own files.
+	t.Run("has other content", func(t *testing.T) {
+		dir := t.TempDir()
+		writeFile(t, filepath.Join(dir, "mine.txt"), "x")
+		if salvageable(dir) {
+			t.Error("a directory with real content must not be cleared")
+		}
+	})
+}
+
+// A wallpapers directory holding only a failed clone's .git must report the
+// step as still pending, not as done.
+func TestWallpapersLinkedRejectsAPartialClone(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	repo := filepath.Join(home, "wallpapers")
+	mkdir(t, filepath.Join(repo, ".git"))
+	mkdir(t, filepath.Join(home, ".config/hypr"))
+	if err := os.Symlink(repo, filepath.Join(home, ".config/hypr/wallpapers")); err != nil {
+		t.Fatal(err)
+	}
+
+	if wallpapersLinked() {
+		t.Error("wallpapersLinked = true for a clone that left only .git — " +
+			"this is what made `hydra status` report in sync with no wallpapers")
+	}
+}
+
+// A real directory at the link path is someone's own wallpapers; refuse rather
+// than delete it. os.Remove would fail on it anyway, and that failure was
+// previously discarded, leaving a confusing EEXIST from the symlink.
+func TestLinkWallpapersRefusesToReplaceARealDirectory(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	writeFile(t, filepath.Join(home, "wallpapers", "a.jpg"), "jpeg")
+	writeFile(t, filepath.Join(home, ".config/hypr/wallpapers", "mine.jpg"), "jpeg")
+
+	err := linkWallpapers()
+	if err == nil {
+		t.Fatal("linkWallpapers replaced a real directory instead of refusing")
+	}
+	if !strings.Contains(err.Error(), "move it aside") {
+		t.Errorf("error %q does not say what to do about it", err)
+	}
+	if _, err := os.Stat(filepath.Join(home, ".config/hypr/wallpapers/mine.jpg")); err != nil {
+		t.Error("the user's own files were removed")
+	}
+}
+
+func TestLinkWallpapersClearsAFailedCloneAndRetries(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	// The wreckage of an earlier failed clone.
+	mkdir(t, filepath.Join(home, "wallpapers", ".git"))
+
+	dir := t.TempDir()
+	script := "#!/bin/sh\nmkdir -p \"$3\" && echo jpeg > \"$3/forest.jpg\"\n"
+	if err := os.WriteFile(filepath.Join(dir, "git"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	if err := linkWallpapers(); err != nil {
+		t.Fatalf("linkWallpapers: %v", err)
+	}
+	if !wallpapersLinked() {
+		t.Error("wallpapersLinked = false after a successful retry")
+	}
+}

@@ -109,21 +109,84 @@ func applyTheme() error {
 	return saveRenderStamp()
 }
 
+// hasWallpapers reports whether a directory actually holds wallpaper images.
+//
+// Counting entries is not enough. A clone that fails part-way leaves a lone
+// .git behind, and through the symlink that reads as a populated directory —
+// so the step reported itself done, `hydra status` said "in sync", and the
+// desktop still came up with no wallpaper and nothing to explain why.
+func hasWallpapers(dir string) bool {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return false
+	}
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		switch strings.ToLower(filepath.Ext(e.Name())) {
+		case ".jpg", ".jpeg", ".png", ".webp", ".bmp":
+			return true
+		}
+	}
+	return false
+}
+
+// salvageable reports whether a directory is empty or holds nothing but .git,
+// which is what a failed clone leaves. Anything else might be the user's own
+// files and is not this tool's to delete.
+func salvageable(dir string) bool {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return false
+	}
+	for _, e := range entries {
+		if e.Name() != ".git" {
+			return false
+		}
+	}
+	return true
+}
+
 func wallpapersLinked() bool {
-	entries, err := os.ReadDir(sys.InHome(".config/hypr/wallpapers"))
-	return err == nil && len(entries) > 0
+	return hasWallpapers(sys.InHome(".config/hypr/wallpapers"))
 }
 
 func linkWallpapers() error {
 	dst := sys.InHome("wallpapers")
-	if !sys.Exists(dst) {
+	if !hasWallpapers(dst) {
+		// Only the wreckage of a previous attempt gets cleared; a directory
+		// with real content in it is left alone and reported.
+		if sys.Exists(dst) {
+			if !salvageable(dst) {
+				return fmt.Errorf("%s exists but holds no wallpapers; "+
+					"move it aside and re-run", dst)
+			}
+			if err := os.RemoveAll(dst); err != nil {
+				return err
+			}
+		}
 		if err := cloneWithFallback(wallpapersRepo, dst); err != nil {
 			return err
 		}
+		if !hasWallpapers(dst) {
+			return fmt.Errorf("cloned %s but found no wallpapers in %s",
+				wallpapersRepo, dst)
+		}
 	}
+
 	link := sys.InHome(".config/hypr/wallpapers")
-	if sys.Exists(link) {
-		os.Remove(link)
+	if fi, err := os.Lstat(link); err == nil {
+		// Replacing a link is routine; a real directory here is someone's own
+		// wallpapers and must not be silently removed. os.Remove would fail on
+		// it anyway, and that failure used to be discarded.
+		if fi.Mode()&os.ModeSymlink == 0 && fi.IsDir() {
+			return fmt.Errorf("%s is a real directory, not a link into %s; "+
+				"move it aside and re-run", link, dst)
+		}
+		if err := os.Remove(link); err != nil {
+			return err
+		}
 	}
 	if err := os.MkdirAll(filepath.Dir(link), 0o755); err != nil {
 		return err
