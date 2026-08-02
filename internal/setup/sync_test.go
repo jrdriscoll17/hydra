@@ -103,6 +103,51 @@ func TestLinkThemeNameReplacesARegularFile(t *testing.T) {
 	}
 }
 
+// The bootstrap's chicken-and-egg: `go install` writes to $GOPATH/bin, which is
+// only put on PATH by the shell config hydra has not deployed yet. So after
+// `hydra init` on a fresh machine, telling the user to run `hydra` is advice
+// that does not work — it has to name a path that does.
+func TestInvocation(t *testing.T) {
+	t.Run("names a reachable path when hydra is not on PATH", func(t *testing.T) {
+		t.Setenv("PATH", t.TempDir())
+
+		got := invocation()
+		if got == "hydra" {
+			t.Fatal("invocation = \"hydra\", which is exactly the command that does " +
+				"not resolve yet on a freshly bootstrapped machine")
+		}
+		// Either an absolute path or a ~-relative one; both are runnable.
+		if !strings.HasPrefix(got, "/") && !strings.HasPrefix(got, "~/") {
+			t.Errorf("invocation = %q, want something the user can actually type", got)
+		}
+	})
+
+	t.Run("prefers the bare name once it is on PATH", func(t *testing.T) {
+		dir := t.TempDir()
+		fakeBin(t, dir, "hydra")
+		t.Setenv("PATH", dir)
+
+		if got := invocation(); got != "hydra" {
+			t.Errorf("invocation = %q, want %q once it resolves", got, "hydra")
+		}
+	})
+
+	t.Run("abbreviates the home directory", func(t *testing.T) {
+		t.Setenv("PATH", t.TempDir())
+		self, err := os.Executable()
+		if err != nil {
+			t.Skip("cannot determine this executable")
+		}
+		// Pretend the binary sits under HOME, as ~/go/bin/hydra does.
+		t.Setenv("HOME", filepath.Dir(filepath.Dir(self)))
+
+		got := invocation()
+		if !strings.HasPrefix(got, "~/") {
+			t.Errorf("invocation = %q, want it shortened to ~/…", got)
+		}
+	})
+}
+
 func TestBackup(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)

@@ -13,9 +13,15 @@ It exists because "I set up something nice on the desktop" kept meaning "now red
 
 ```sh
 go install github.com/jrdriscoll17/hydra@latest
-hydra init            # clone the config repo, set up chezmoi, link `theme`
-hydra                 # choose components and install them
+~/go/bin/hydra init   # clone the config repo, set up chezmoi, link `theme`
+~/go/bin/hydra        # choose components and install them
 ```
+
+The full path is not a typo, and only these first two commands need it. `go
+install` writes to `$(go env GOPATH)/bin`, which on a machine this has never run
+on is not yet on `PATH` — the shell config that puts it there is one of the
+files hydra is about to deploy. Start a new shell afterwards and `hydra`,
+`theme` and everything else resolve by name.
 
 Then, on any machine, whenever something changed on another:
 

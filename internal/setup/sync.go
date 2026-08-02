@@ -53,8 +53,27 @@ func Init(repo string) error {
 		fmt.Println(warnStyle.Render("  " + err.Error()))
 	}
 
-	fmt.Println(okStyle.Render("\nready — run `hydra` to choose components and install"))
+	fmt.Println(okStyle.Render("\nready — run `" + invocation() +
+		"` to choose components and install"))
 	return nil
+}
+
+// invocation is how the user can actually reach this binary right now. On a
+// machine hydra has never run on, `go install` has put it somewhere not yet on
+// PATH — the shell config that fixes that is one of the files this is about to
+// deploy — so telling them to run `hydra` is advice that does not work yet.
+func invocation() string {
+	if sys.Have("hydra") {
+		return "hydra"
+	}
+	self, err := os.Executable()
+	if err != nil {
+		return "hydra"
+	}
+	if home := sys.Home(); home != "" && strings.HasPrefix(self, home+"/") {
+		return "~" + strings.TrimPrefix(self, home)
+	}
+	return self
 }
 
 // linkThemeName puts a `theme` symlink beside this binary. `go install` only
