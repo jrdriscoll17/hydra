@@ -1,3 +1,5 @@
-# built by `make install`; `go install` is the normal path
-hydra
-setup
+# Build artefacts from `make build` / `make install`. Anchored to the repo root
+# on purpose: a bare `setup` pattern also matches internal/setup/, which
+# silently kept that whole package out of v0.1.0.
+/hydra
+/setup
