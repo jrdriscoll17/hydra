@@ -215,15 +215,30 @@ func linkWallpapers() error {
 
 	link := sys.InHome(".config/hypr/wallpapers")
 	if fi, err := os.Lstat(link); err == nil {
-		// Replacing a link is routine; a real directory here is someone's own
-		// wallpapers and must not be silently removed. os.Remove would fail on
-		// it anyway, and that failure used to be discarded.
-		if fi.Mode()&os.ModeSymlink == 0 && fi.IsDir() {
-			return fmt.Errorf("%s is a real directory, not a link into %s; "+
-				"move it aside and re-run", link, dst)
-		}
-		if err := os.Remove(link); err != nil {
-			return err
+		switch {
+		case fi.Mode()&os.ModeSymlink != 0:
+			// Replacing a link is routine.
+			if err := os.Remove(link); err != nil {
+				return err
+			}
+		case fi.IsDir() && salvageable(link):
+			// An empty directory gets left here by hyprpaper, or by an earlier
+			// run that failed between creating it and linking. There is nothing
+			// in it to lose, and refusing to clear it only strands the machine
+			// with no wallpapers and a message telling the user to do it by
+			// hand.
+			if err := os.RemoveAll(link); err != nil {
+				return err
+			}
+		case fi.IsDir():
+			// A directory with real content in it, though, is someone's own
+			// wallpapers and is not ours to delete.
+			return fmt.Errorf("%s is a directory with files in it, not a link "+
+				"into %s; move it aside and re-run", link, dst)
+		default:
+			if err := os.Remove(link); err != nil {
+				return err
+			}
 		}
 	}
 	if err := os.MkdirAll(filepath.Dir(link), 0o755); err != nil {

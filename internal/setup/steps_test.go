@@ -355,6 +355,27 @@ func TestWallpapersLinkedRejectsAPartialClone(t *testing.T) {
 // A real directory at the link path is someone's own wallpapers; refuse rather
 // than delete it. os.Remove would fail on it anyway, and that failure was
 // previously discarded, leaving a confusing EEXIST from the symlink.
+// An empty directory is left behind by hyprpaper, or by an earlier run that
+// died between creating it and linking. Refusing to clear it stranded the
+// machine with no wallpapers and a message telling the user to fix it by hand.
+func TestLinkWallpapersClearsAnEmptyRealDirectory(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	writeFile(t, filepath.Join(home, "wallpapers", "new_rock.jpg"), "jpeg")
+	mkdir(t, filepath.Join(home, ".config/hypr/wallpapers"))
+
+	if err := linkWallpapers(); err != nil {
+		t.Fatalf("linkWallpapers: %v", err)
+	}
+	target, err := os.Readlink(filepath.Join(home, ".config/hypr/wallpapers"))
+	if err != nil {
+		t.Fatalf("an empty directory was not replaced with a link: %v", err)
+	}
+	if want := filepath.Join(home, "wallpapers"); target != want {
+		t.Errorf("link -> %q, want %q", target, want)
+	}
+}
+
 func TestLinkWallpapersRefusesToReplaceARealDirectory(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
@@ -367,6 +388,9 @@ func TestLinkWallpapersRefusesToReplaceARealDirectory(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "move it aside") {
 		t.Errorf("error %q does not say what to do about it", err)
+	}
+	if !strings.Contains(err.Error(), "files in it") {
+		t.Errorf("error %q does not distinguish this from an empty directory", err)
 	}
 	if _, err := os.Stat(filepath.Join(home, ".config/hypr/wallpapers/mine.jpg")); err != nil {
 		t.Error("the user's own files were removed")
