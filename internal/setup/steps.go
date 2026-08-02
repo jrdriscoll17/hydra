@@ -132,6 +132,20 @@ func hasWallpapers(dir string) bool {
 	return false
 }
 
+// moveAside renames a path to <path>.before-setup, matching what the conflict
+// prompt does to a config file, and returns where it went. It never overwrites
+// an existing backup — a second run must not destroy what the first preserved.
+func moveAside(path string) (string, error) {
+	dst := path + ".before-setup"
+	for i := 2; sys.Exists(dst); i++ {
+		dst = fmt.Sprintf("%s.before-setup.%d", path, i)
+	}
+	if err := os.Rename(path, dst); err != nil {
+		return "", fmt.Errorf("moving %s aside: %w", path, err)
+	}
+	return dst, nil
+}
+
 // salvageable reports whether a directory is empty or holds nothing but .git,
 // which is what a failed clone leaves. Anything else might be the user's own
 // files and is not this tool's to delete.
@@ -231,10 +245,15 @@ func linkWallpapers() error {
 				return err
 			}
 		case fi.IsDir():
-			// A directory with real content in it, though, is someone's own
-			// wallpapers and is not ours to delete.
-			return fmt.Errorf("%s is a directory with files in it, not a link "+
-				"into %s; move it aside and re-run", link, dst)
+			// A directory with files in it is not ours to delete — but stopping
+			// and telling the user to move it by hand leaves the machine broken
+			// for no good reason. Backing it up and carrying on is what this
+			// tool already does with a config file that is in the way.
+			aside, err := moveAside(link)
+			if err != nil {
+				return err
+			}
+			fmt.Printf("    moved %s aside to %s\n", link, filepath.Base(aside))
 		default:
 			if err := os.Remove(link); err != nil {
 				return err

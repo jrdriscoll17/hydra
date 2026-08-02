@@ -376,24 +376,64 @@ func TestLinkWallpapersClearsAnEmptyRealDirectory(t *testing.T) {
 	}
 }
 
-func TestLinkWallpapersRefusesToReplaceARealDirectory(t *testing.T) {
+// A directory with files in it is not ours to delete — but stopping and
+// telling the user to move it by hand leaves the machine broken for no good
+// reason. Back it up and carry on, which is what the conflict prompt does with
+// a config file that is in the way.
+func TestLinkWallpapersMovesARealDirectoryAside(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
-	writeFile(t, filepath.Join(home, "wallpapers", "a.jpg"), "jpeg")
-	writeFile(t, filepath.Join(home, ".config/hypr/wallpapers", "mine.jpg"), "jpeg")
+	writeFile(t, filepath.Join(home, "wallpapers", "new_rock.jpg"), "jpeg")
+	writeFile(t, filepath.Join(home, ".config/hypr/wallpapers", "mine.jpg"), "not from the repo")
 
-	err := linkWallpapers()
-	if err == nil {
-		t.Fatal("linkWallpapers replaced a real directory instead of refusing")
+	out := quiet(t, func() {
+		if err := linkWallpapers(); err != nil {
+			t.Errorf("linkWallpapers: %v", err)
+		}
+	})
+
+	link := filepath.Join(home, ".config/hypr/wallpapers")
+	target, err := os.Readlink(link)
+	if err != nil {
+		t.Fatalf("the link was not created: %v", err)
 	}
-	if !strings.Contains(err.Error(), "move it aside") {
-		t.Errorf("error %q does not say what to do about it", err)
+	if want := filepath.Join(home, "wallpapers"); target != want {
+		t.Errorf("link -> %q, want %q", target, want)
 	}
-	if !strings.Contains(err.Error(), "files in it") {
-		t.Errorf("error %q does not distinguish this from an empty directory", err)
+
+	// Nothing may be lost.
+	kept := readFile(t, link+".before-setup/mine.jpg")
+	if kept != "not from the repo" {
+		t.Errorf("the displaced files were not preserved: %q", kept)
 	}
-	if _, err := os.Stat(filepath.Join(home, ".config/hypr/wallpapers/mine.jpg")); err != nil {
-		t.Error("the user's own files were removed")
+	if !strings.Contains(out, "before-setup") {
+		t.Errorf("the move was not reported:\n%s", out)
+	}
+}
+
+// A second run must not destroy what the first preserved.
+func TestMoveAsideNeverOverwritesAnExistingBackup(t *testing.T) {
+	dir := t.TempDir()
+	target := filepath.Join(dir, "wallpapers")
+
+	mkdir(t, target)
+	writeFile(t, filepath.Join(target, "first.jpg"), "first")
+	if _, err := moveAside(target); err != nil {
+		t.Fatal(err)
+	}
+
+	mkdir(t, target)
+	writeFile(t, filepath.Join(target, "second.jpg"), "second")
+	second, err := moveAside(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if got := readFile(t, filepath.Join(dir, "wallpapers.before-setup/first.jpg")); got != "first" {
+		t.Errorf("the first backup was clobbered: %q", got)
+	}
+	if got := readFile(t, filepath.Join(second, "second.jpg")); got != "second" {
+		t.Errorf("the second backup is wrong: %q", got)
 	}
 }
 
