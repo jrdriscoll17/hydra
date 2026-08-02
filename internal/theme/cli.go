@@ -45,6 +45,19 @@ var listactiveRe = regexp.MustCompile(`(?m)^\S+: (/.*)$`)
 // up. That's what made a theme switch appear to need doing twice. Re-issue until
 // listactive agrees, which costs one extra call once the image is warm.
 func setWallpaper(path string) bool {
+	// A missing file is the common cause of a switch never taking, and it used
+	// to present as the least useful symptom available: EvalSymlinks fails, the
+	// comparison below can then never match hyprpaper's resolved path, and the
+	// loop spends 2.4s to report "did not switch" without saying why.
+	if !sys.Exists(path) {
+		fmt.Fprintf(os.Stderr,
+			"theme: wallpaper %s does not exist\n"+
+				"       the palette names it, but %s is missing it —\n"+
+				"       run `hydra sync` to reclone the wallpapers repo\n",
+			filepath.Base(path), filepath.Dir(path))
+		return false
+	}
+
 	// hyprpaper reports the canonical path in `listactive`, and the wallpaper
 	// dir is a symlink (~/.config/hypr/wallpapers -> the wallpapers repo), so
 	// compare resolved paths — a literal match never succeeds through a link.

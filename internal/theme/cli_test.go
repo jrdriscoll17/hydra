@@ -444,3 +444,56 @@ func TestSetWallpaperReturnsFastWithoutHyprpaper(t *testing.T) {
 		t.Fatal("setWallpaper blocked polling despite hyprpaper being absent")
 	}
 }
+
+// A wallpaper the palette names but the repo does not have used to present as
+// the least useful symptom available: EvalSymlinks fails, the path comparison
+// can never match, and the poll loop spends 2.4s to report "did not switch"
+// without ever mentioning the missing file.
+func TestSetWallpaperReportsAMissingFile(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	missing := filepath.Join(home, ".config/hypr/wallpapers", "new_rock.jpg")
+
+	stderr := captureStderr(t, func() {
+		done := make(chan bool, 1)
+		go func() { done <- setWallpaper(missing) }()
+
+		select {
+		case ok := <-done:
+			if ok {
+				t.Error("setWallpaper reported success for a file that does not exist")
+			}
+		case <-time.After(2 * time.Second):
+			t.Fatal("setWallpaper polled instead of failing fast on a missing file")
+		}
+	})
+
+	if !strings.Contains(stderr, "new_rock.jpg") {
+		t.Errorf("stderr = %q, want it to name the missing wallpaper", stderr)
+	}
+	if !strings.Contains(stderr, "does not exist") {
+		t.Errorf("stderr = %q, want it to say the file is missing", stderr)
+	}
+}
+
+func captureStderr(t *testing.T, fn func()) string {
+	t.Helper()
+	original := os.Stderr
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	os.Stderr = w
+
+	done := make(chan string, 1)
+	go func() {
+		raw, _ := io.ReadAll(r)
+		done <- string(raw)
+	}()
+
+	fn()
+	w.Close()
+	os.Stderr = original
+	return <-done
+}
