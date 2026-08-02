@@ -365,3 +365,78 @@ func fakeBin(t *testing.T, dir, name string) {
 	}
 	t.Cleanup(func() { os.Remove(path) })
 }
+
+// -- chezmoi readiness -------------------------------------------------------
+
+// stubChezmoi puts a fake `chezmoi` first on PATH that prints sourcePath and
+// exits 0, which is what the real one does even with no config file.
+func stubChezmoi(t *testing.T, sourcePath string) {
+	t.Helper()
+	dir := t.TempDir()
+	script := "#!/bin/sh\ncase \"$1\" in\n  source-path) echo " + sourcePath + " ;;\n" +
+		"  *) echo 'chezmoi: no config' >&2; exit 1 ;;\nesac\n"
+	if err := os.WriteFile(filepath.Join(dir, "chezmoi"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+}
+
+// The bug this pins: `chezmoi source-path` exits 0 on a machine with no config
+// at all, reporting the default ~/.local/share/chezmoi. Treating that as "set
+// up" skipped `chezmoi init` on exactly the fresh machines that needed it, and
+// the first command to read the source died with a bare "exit status 1".
+func TestChezmoiInitialised(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	source := filepath.Join(home, "dotfiles")
+	mkdir(t, source)
+
+	t.Run("succeeding but pointing at the default location is not set up", func(t *testing.T) {
+		stubChezmoi(t, filepath.Join(home, ".local/share/chezmoi"))
+		if chezmoiInitialised(source) {
+			t.Error("chezmoiInitialised = true while chezmoi points at its own default, " +
+				"not at the config repo — this is the state that produced " +
+				"\"reading chezmoi status: exit status 1\"")
+		}
+	})
+
+	t.Run("pointing at the config repo is set up", func(t *testing.T) {
+		stubChezmoi(t, source)
+		if !chezmoiInitialised(source) {
+			t.Error("chezmoiInitialised = false while chezmoi points at the config repo")
+		}
+	})
+
+	// Pointing at a directory that is not there is no better than not being
+	// configured at all.
+	t.Run("pointing at a missing directory is not set up", func(t *testing.T) {
+		stubChezmoi(t, filepath.Join(home, "gone"))
+		if chezmoiInitialised(filepath.Join(home, "gone")) {
+			t.Error("chezmoiInitialised = true for a source directory that does not exist")
+		}
+	})
+
+	t.Run("no chezmoi at all", func(t *testing.T) {
+		t.Setenv("PATH", t.TempDir())
+		if chezmoiInitialised(source) {
+			t.Error("chezmoiInitialised = true with no chezmoi installed")
+		}
+	})
+}
+
+// A bare "exit status 1" from a tool hydra only drives is not a usable report;
+// the reason is on stderr and has to survive.
+func TestScanErrorExplainsItself(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	// source-path answers the default, status fails — the real fresh-machine state.
+	stubChezmoi(t, filepath.Join(home, ".local/share/chezmoi"))
+
+	_, err := scan([]string{".config/nvim"})
+	if err == nil {
+		t.Fatal("scan succeeded against an uninitialised chezmoi")
+	}
+	if !strings.Contains(err.Error(), "hydra init") {
+		t.Errorf("error %q does not tell the user what to do about it", err)
+	}
+}

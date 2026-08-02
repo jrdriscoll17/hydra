@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 
 	"github.com/jrdriscoll17/hydra/internal/sys"
@@ -85,6 +86,25 @@ func installAUR(pkgs []string) error {
 
 func chezmoiReady() bool { return sys.Have("chezmoi") }
 
+// configSource is where hydra keeps the chezmoi source repo.
+func configSource() string { return sys.InHome("dotfiles") }
+
+// chezmoiInitialised reports whether chezmoi is actually pointed at our config
+// repo.
+//
+// The obvious probe — whether `chezmoi source-path` succeeds — does not work:
+// it exits 0 on a machine with no config at all, printing the default
+// ~/.local/share/chezmoi. Trusting that meant `chezmoi init` was skipped on
+// exactly the fresh machines that needed it, and the first command to actually
+// read the source failed with a bare "exit status 1".
+func chezmoiInitialised(source string) bool {
+	got, err := sys.Capture("chezmoi", "source-path")
+	if err != nil {
+		return false
+	}
+	return filepath.Clean(got) == filepath.Clean(source) && sys.Exists(got)
+}
+
 func installChezmoi() error {
 	script := `sh -c "$(curl -fsLS get.chezmoi.io)" -- -b "$HOME/.local/bin"`
 	return sys.Run("sh", "-c", script)
@@ -103,6 +123,10 @@ const (
 func scan(paths []string) (map[string]FileState, error) {
 	out, err := sys.Capture("chezmoi", "status")
 	if err != nil {
+		if source := configSource(); !chezmoiInitialised(source) {
+			return nil, fmt.Errorf("chezmoi is not set up against %s; "+
+				"run `hydra init` first (%w)", source, err)
+		}
 		return nil, err
 	}
 	return parseStatus(out, paths), nil

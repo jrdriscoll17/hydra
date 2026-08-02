@@ -109,10 +109,14 @@ func preflight() error {
 	}
 
 	// A source dir that has never been initialised has no config file, so
-	// templates cannot render.
-	if _, err := sys.Capture("chezmoi", "source-path"); err != nil {
-		fmt.Println(dimStyle.Render("initialising chezmoi from ~/dotfiles..."))
-		if err := sys.Run("chezmoi", "init", "--source", sys.InHome("dotfiles")); err != nil {
+	// templates cannot render and every later chezmoi call fails.
+	source := configSource()
+	if !chezmoiInitialised(source) {
+		if !sys.Exists(source) {
+			return fmt.Errorf("no config repo at %s; run `hydra init` first", source)
+		}
+		fmt.Println(dimStyle.Render("initialising chezmoi from " + source + "..."))
+		if err := sys.Run("chezmoi", "init", "--source", source); err != nil {
 			return fmt.Errorf("chezmoi init: %w", err)
 		}
 	}

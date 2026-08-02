@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"slices"
+	"strings"
 	"testing"
 )
 
@@ -74,6 +75,29 @@ func TestCapture(t *testing.T) {
 	if _, err := Capture("sh", "-c", "exit 3"); err == nil {
 		t.Error("Capture of a failing command returned nil error")
 	}
+
+	// The reason a command failed is on stderr. Dropping it leaves callers
+	// reporting a bare "exit status 1", which says nothing about what went
+	// wrong inside a tool this only drives.
+	t.Run("failures carry stderr", func(t *testing.T) {
+		_, err := Capture("sh", "-c", "echo 'the actual reason' >&2; exit 1")
+		if err == nil {
+			t.Fatal("returned nil error")
+		}
+		if !strings.Contains(err.Error(), "the actual reason") {
+			t.Errorf("error = %q, want it to include the message on stderr", err)
+		}
+	})
+
+	t.Run("stdout is still returned alongside a failure", func(t *testing.T) {
+		out, err := Capture("sh", "-c", "printf partial; exit 1")
+		if err == nil {
+			t.Fatal("returned nil error")
+		}
+		if out != "partial" {
+			t.Errorf("stdout = %q, want %q", out, "partial")
+		}
+	})
 	if _, err := Capture("hydra-definitely-not-a-real-binary"); err == nil {
 		t.Error("Capture of a missing binary returned nil error")
 	}

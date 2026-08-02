@@ -4,6 +4,7 @@
 package sys
 
 import (
+	"fmt"
 	"io"
 	"os"
 	"os/exec"
@@ -40,9 +41,23 @@ func Run(name string, args ...string) error {
 }
 
 // Capture runs a command silently and returns its trimmed stdout.
+//
+// A failure carries the command's stderr, because that is where the reason
+// lives — an unadorned "exit status 1" tells the user nothing about what went
+// wrong inside a tool hydra only drives.
 func Capture(name string, args ...string) (string, error) {
-	out, err := exec.Command(name, args...).Output()
-	return strings.TrimSpace(string(out)), err
+	cmd := exec.Command(name, args...)
+	var stdout, stderr strings.Builder
+	cmd.Stdout, cmd.Stderr = &stdout, &stderr
+
+	err := cmd.Run()
+	out := strings.TrimSpace(stdout.String())
+	if err != nil {
+		if msg := strings.TrimSpace(stderr.String()); msg != "" {
+			return out, fmt.Errorf("%w: %s", err, msg)
+		}
+	}
+	return out, err
 }
 
 // Quiet is a best-effort side effect. A missing binary or a dead daemon is not

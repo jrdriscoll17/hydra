@@ -32,7 +32,7 @@ func Init(repo string) error {
 		}
 	}
 
-	source := sys.InHome("dotfiles")
+	source := configSource()
 	if !sys.Exists(source) {
 		fmt.Printf("%s %s\n", titleStyle.Render("▸ cloning"), repo)
 		if err := sys.Run("git", "clone", repo, source); err != nil {
@@ -42,7 +42,7 @@ func Init(repo string) error {
 		fmt.Println(dimStyle.Render("config repo already at " + source))
 	}
 
-	if _, err := sys.Capture("chezmoi", "source-path"); err != nil {
+	if !chezmoiInitialised(source) {
 		fmt.Println(titleStyle.Render("▸ initialising chezmoi"))
 		if err := sys.Run("chezmoi", "init", "--source", source); err != nil {
 			return fmt.Errorf("chezmoi init: %w", err)
