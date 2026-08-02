@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/jrdriscoll17/hydra/internal/sys"
@@ -90,16 +91,58 @@ func lazySynced() bool {
 	if err := json.Unmarshal(raw, &lock); err != nil || len(lock) == 0 {
 		return sys.Exists(sys.InHome(".local/share/nvim/lazy/lazy.nvim"))
 	}
-	for name := range lock {
-		if !sys.Exists(sys.InHome(".local/share/nvim/lazy/" + name)) {
-			return false
+	return len(missingPlugins(lock)) == 0
+}
+
+// pluginInstalled reports whether a lazy plugin directory actually holds the
+// plugin. The directory existing is not enough — an interrupted clone leaves an
+// empty one, or one containing only .git, and nvim then fails to load the
+// colorscheme inside it while everything here reports the sync complete.
+func pluginInstalled(name string) bool {
+	entries, err := os.ReadDir(sys.InHome(".local/share/nvim/lazy/" + name))
+	if err != nil {
+		return false
+	}
+	for _, e := range entries {
+		if e.Name() != ".git" {
+			return true
 		}
 	}
-	return true
+	return false
+}
+
+func missingPlugins(lock map[string]any) []string {
+	var missing []string
+	for name := range lock {
+		if !pluginInstalled(name) {
+			missing = append(missing, name)
+		}
+	}
+	sort.Strings(missing)
+	return missing
 }
 
 func syncLazy() error {
-	return sys.Run("nvim", "--headless", "+Lazy! sync", "+qa")
+	if err := sys.Run("nvim", "--headless", "+Lazy! sync", "+qa"); err != nil {
+		return err
+	}
+
+	// `Lazy! sync` exits 0 whether or not every plugin actually landed, so
+	// check rather than assume. A colorscheme that quietly failed to clone is
+	// invisible until a theme switch appears to do nothing.
+	raw, err := os.ReadFile(sys.InHome(".config/nvim/lazy-lock.json"))
+	if err != nil {
+		return nil
+	}
+	var lock map[string]any
+	if err := json.Unmarshal(raw, &lock); err != nil {
+		return nil
+	}
+	if missing := missingPlugins(lock); len(missing) > 0 {
+		return fmt.Errorf("these plugins are still not installed: %s",
+			strings.Join(missing, ", "))
+	}
+	return nil
 }
 
 func doomInstalled() bool { return sys.Exists(sys.InHome(".config/emacs/bin/doom")) }

@@ -3,6 +3,7 @@ package setup
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -552,17 +553,17 @@ func TestLazySyncedComparesAgainstTheLockfile(t *testing.T) {
 
 	// Only lazy itself is installed, which is exactly the state that used to
 	// pass.
-	mkdir(t, filepath.Join(home, ".local/share/nvim/lazy/lazy.nvim"))
+	writeFile(t, filepath.Join(home, ".local/share/nvim/lazy/lazy.nvim/init.lua"), "-- lazy")
 	if lazySynced() {
 		t.Error("lazySynced = true with only lazy.nvim installed and two plugins missing")
 	}
 
-	mkdir(t, filepath.Join(home, ".local/share/nvim/lazy/nightfox.nvim"))
+	writeFile(t, filepath.Join(home, ".local/share/nvim/lazy/nightfox.nvim/init.lua"), "-- nightfox")
 	if lazySynced() {
 		t.Error("lazySynced = true with one plugin still missing")
 	}
 
-	mkdir(t, filepath.Join(home, ".local/share/nvim/lazy/onedark"))
+	writeFile(t, filepath.Join(home, ".local/share/nvim/lazy/onedark/init.lua"), "-- onedark")
 	if !lazySynced() {
 		t.Error("lazySynced = false with every locked plugin present")
 	}
@@ -577,7 +578,7 @@ func TestLazySyncedWithoutALockfile(t *testing.T) {
 	if lazySynced() {
 		t.Error("lazySynced = true on an empty HOME")
 	}
-	mkdir(t, filepath.Join(home, ".local/share/nvim/lazy/lazy.nvim"))
+	writeFile(t, filepath.Join(home, ".local/share/nvim/lazy/lazy.nvim/init.lua"), "-- lazy")
 	if !lazySynced() {
 		t.Error("lazySynced = false with lazy present and no lockfile to check")
 	}
@@ -587,7 +588,7 @@ func TestLazySyncedWithAnUnreadableLockfile(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	writeFile(t, filepath.Join(home, ".config/nvim/lazy-lock.json"), "{not json")
-	mkdir(t, filepath.Join(home, ".local/share/nvim/lazy/lazy.nvim"))
+	writeFile(t, filepath.Join(home, ".local/share/nvim/lazy/lazy.nvim/init.lua"), "-- lazy")
 
 	if !lazySynced() {
 		t.Error("lazySynced = false on a corrupt lockfile; it should fall back")
@@ -603,5 +604,67 @@ func TestRealLazyLockMatchesThisMachine(t *testing.T) {
 	if !lazySynced() {
 		t.Error("lazySynced = false on this machine — either a plugin in the " +
 			"lockfile is not installed, or the directory naming assumption is wrong")
+	}
+}
+
+// An interrupted clone leaves an empty plugin directory, or one holding only
+// .git. nvim then fails to load the colorscheme inside it while everything
+// here reports the sync complete — which is how evergreen silently stayed on
+// the fallback scheme.
+func TestPluginInstalledRequiresActualContent(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	lazy := filepath.Join(home, ".local/share/nvim/lazy")
+
+	if pluginInstalled("everforest") {
+		t.Error("pluginInstalled = true for a directory that does not exist")
+	}
+
+	mkdir(t, filepath.Join(lazy, "everforest"))
+	if pluginInstalled("everforest") {
+		t.Error("pluginInstalled = true for an empty directory")
+	}
+
+	mkdir(t, filepath.Join(lazy, "everforest/.git"))
+	if pluginInstalled("everforest") {
+		t.Error("pluginInstalled = true for a directory holding only .git")
+	}
+
+	writeFile(t, filepath.Join(lazy, "everforest/colors/everforest.vim"), "\" scheme")
+	if !pluginInstalled("everforest") {
+		t.Error("pluginInstalled = false for a real checkout")
+	}
+}
+
+func TestLazySyncedRejectsAnEmptyPluginDirectory(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	writeFile(t, filepath.Join(home, ".config/nvim/lazy-lock.json"),
+		`{"lazy.nvim":{"commit":"a"},"everforest":{"commit":"b"}}`)
+
+	lazy := filepath.Join(home, ".local/share/nvim/lazy")
+	writeFile(t, filepath.Join(lazy, "lazy.nvim/init.lua"), "-- lazy")
+	mkdir(t, filepath.Join(lazy, "everforest")) // present but empty
+
+	if lazySynced() {
+		t.Error("lazySynced = true with an empty plugin directory — the colorscheme " +
+			"inside it cannot load, so the theme silently does not switch")
+	}
+
+	writeFile(t, filepath.Join(lazy, "everforest/colors/everforest.vim"), "\" scheme")
+	if !lazySynced() {
+		t.Error("lazySynced = false once the plugin has content")
+	}
+}
+
+func TestMissingPluginsIsSortedAndNamesThem(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	lock := map[string]any{"zebra": nil, "alpha": nil, "present": nil}
+	writeFile(t, filepath.Join(home, ".local/share/nvim/lazy/present/init.lua"), "x")
+
+	got := missingPlugins(lock)
+	if !slices.Equal(got, []string{"alpha", "zebra"}) {
+		t.Errorf("missingPlugins = %v, want [alpha zebra]", got)
 	}
 }
