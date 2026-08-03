@@ -9,21 +9,25 @@ import (
 	"testing"
 )
 
-// unmanagedStub makes `chezmoi unmanaged <dir>` answer with the lines the map
-// gives for that directory, and fail for any other subcommand — nothing here
-// should be reaching for a different one.
+// unmanagedStub makes `chezmoi unmanaged <dir>...` answer with the lines the map
+// gives for each directory it was passed, and fail for any other subcommand —
+// nothing here should be reaching for a different one. It answers for every
+// argument, because strays asks about all of them in one call.
 func unmanagedStub(t *testing.T, byDir map[string][]string) {
 	t.Helper()
 
 	var cases strings.Builder
 	for dir, paths := range byDir {
-		fmt.Fprintf(&cases, "  %s)\n    cat <<'EOF'\n%s\nEOF\n    ;;\n",
+		fmt.Fprintf(&cases, "    %s)\n      cat <<'EOF'\n%s\nEOF\n      ;;\n",
 			dir, strings.Join(paths, "\n"))
 	}
 
 	script := "#!/bin/sh\n" +
 		"[ \"$1\" = unmanaged ] || exit 1\n" +
-		"case \"$2\" in\n" + cases.String() + "  *) : ;;\nesac\n"
+		"shift\n" +
+		"for dir in \"$@\"; do\n" +
+		"  case \"$dir\" in\n" + cases.String() + "    *) : ;;\n  esac\n" +
+		"done\n"
 
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, "chezmoi"), []byte(script), 0o755); err != nil {
@@ -101,6 +105,35 @@ func TestStraysDeduplicates(t *testing.T) {
 	})
 	if len(got) != 1 {
 		t.Errorf("strays = %v, want one entry for a directory named twice", got)
+	}
+}
+
+// Every exclusive directory goes in one call. Starting chezmoi is most of what
+// asking costs, and this is on the path of both `hydra status` and `hydra sync`.
+func TestStraysAsksChezmoiOnce(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	mkdir(t, filepath.Join(home, ".config/nvim"))
+	mkdir(t, filepath.Join(home, ".config/hypr"))
+
+	calls := filepath.Join(t.TempDir(), "calls")
+	stubs := t.TempDir()
+	script := "#!/bin/sh\necho x >> " + calls + "\n" +
+		"echo .config/nvim/old.lua\necho .config/hypr/old.conf\n"
+	if err := os.WriteFile(filepath.Join(stubs, "chezmoi"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", stubs+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	got := strays([]Component{
+		{Key: "nvim", Exclusive: []string{".config/nvim"}},
+		{Key: "hyprland", Exclusive: []string{".config/hypr"}},
+	})
+	if len(got) != 2 {
+		t.Errorf("strays = %v, want both leftovers", got)
+	}
+	if n := strings.Count(readFile(t, calls), "x"); n != 1 {
+		t.Errorf("chezmoi was run %d times for 2 directories, want 1", n)
 	}
 }
 

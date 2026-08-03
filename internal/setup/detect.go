@@ -3,7 +3,6 @@ package setup
 import (
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 
@@ -38,14 +37,45 @@ func hostname() string {
 
 // -- packages ----------------------------------------------------------------
 
-func pkgInstalled(name string) bool {
-	return exec.Command("pacman", "-Qq", name).Run() == nil
+// Package queries ask pacman once per run rather than once per name.
+//
+// Spawning `pacman -Qq <name>` costs the same process start and database open
+// whatever it is asked about — about 60ms — so the forty-odd names in the
+// catalog were the bulk of what `hydra status` and `hydra sync` spent their time
+// on, before either had said anything. The whole local database comes back in
+// one call for the price of a single query, and membership of that list answers
+// exactly the same question: `-Qq <name>` matches an installed package by its
+// own name, which is what the list contains.
+func installedPackages() map[string]bool { return pkgSet("-Qq") }
+
+// knownPackages is every name the sync databases can resolve — the question
+// `pacman -Si <name>` answers one package at a time, and that one is far worse
+// at ~300ms a call.
+func knownPackages() map[string]bool { return pkgSet("-Slq") }
+
+// pkgSet runs a pacman listing and returns the names it printed. A pacman that
+// cannot answer gives an empty set rather than a partial one; what that means is
+// the caller's to decide.
+func pkgSet(query string) map[string]bool {
+	out, err := sys.Capture("pacman", query)
+	if err != nil {
+		return nil
+	}
+	set := map[string]bool{}
+	for line := range strings.SplitSeq(out, "\n") {
+		if name := strings.TrimSpace(line); name != "" {
+			set[name] = true
+		}
+	}
+	return set
 }
 
-func missing(pkgs []string) []string {
+// missing lists the packages that are not installed. A machine with no pacman
+// at all reports every one of them, which is what asking a name at a time did.
+func missing(pkgs []string, installed map[string]bool) []string {
 	var out []string
 	for _, p := range pkgs {
-		if !pkgInstalled(p) {
+		if !installed[p] {
 			out = append(out, p)
 		}
 	}
@@ -62,11 +92,6 @@ func aurHelper() string {
 	return ""
 }
 
-// pkgKnown reports whether pacman can resolve a package name at all.
-func pkgKnown(name string) bool {
-	return exec.Command("pacman", "-Si", name).Run() == nil
-}
-
 // installPackages installs what pacman can resolve, and says loudly what it
 // could not.
 //
@@ -79,10 +104,20 @@ func installPackages(pkgs []string) error {
 		return nil
 	}
 
-	var known, unknown []string
+	known := knownPackages()
+	// A pacman that is there but answered with nothing has not told us these
+	// packages do not exist — it has failed to answer, which is what an empty
+	// sync database on a machine that has never run `pacman -Sy` looks like.
+	// Reading that as "none of these are real" would silently skip the whole
+	// install, so hand the list over and let pacman say why itself.
+	if len(known) == 0 && sys.Have("pacman") {
+		return sys.Run("sudo", append([]string{"pacman", "-S", "--needed"}, pkgs...)...)
+	}
+
+	var resolvable, unknown []string
 	for _, p := range pkgs {
-		if pkgKnown(p) {
-			known = append(known, p)
+		if known[p] {
+			resolvable = append(resolvable, p)
 		} else {
 			unknown = append(unknown, p)
 		}
@@ -94,10 +129,10 @@ func installPackages(pkgs []string) error {
 		fmt.Println(dimStyle.Render(
 			"  (renamed, dropped, or moved to the AUR — install by hand if you want them)"))
 	}
-	if len(known) == 0 {
+	if len(resolvable) == 0 {
 		return nil
 	}
-	return sys.Run("sudo", append([]string{"pacman", "-S", "--needed"}, known...)...)
+	return sys.Run("sudo", append([]string{"pacman", "-S", "--needed"}, resolvable...)...)
 }
 
 func installAUR(pkgs []string) error {

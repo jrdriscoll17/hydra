@@ -54,7 +54,7 @@ func Run() error {
 	if err != nil {
 		return err
 	}
-	printPlan(selected, d.pacman, d.aur, d.fresh, d.conflicts, d.stray)
+	printPlan(selected, d, pendingSteps(selected))
 
 	decisions, err := resolveConflicts(d.conflicts)
 	if err != nil {
@@ -405,21 +405,28 @@ func printChecks(checks []Check) int {
 
 // -- presentation ------------------------------------------------------------
 
-func printPlan(selected []Component, pacman, aur, fresh, conflicts, stray []string) {
+// printPlan takes the pending steps rather than working them out, because the
+// callers need the same list for themselves and every check behind it costs a
+// process start or a hash of this binary.
+func printPlan(selected []Component, d drift, pending []string) {
 	fmt.Println("\n" + titleStyle.Render("▸ Plan"))
 	names := make([]string, 0, len(selected))
 	for _, c := range selected {
 		names = append(names, c.Name)
 	}
 	fmt.Printf("  components : %s\n", strings.Join(names, ", "))
-	fmt.Printf("  packages   : %s\n", countLabel(len(pacman)+len(aur), "to install", "already installed"))
-	fmt.Printf("  new files  : %s\n", countLabel(len(fresh), "to create", "none"))
-	fmt.Printf("  conflicts  : %s\n", countLabel(len(conflicts), "need a decision", "none"))
-	fmt.Printf("  leftovers  : %s\n", countLabel(len(stray), "not in the repo", "none"))
-	fmt.Printf("  bootstrap  : %s\n", countLabel(len(pendingSteps(selected)), "step(s) to run", "nothing pending"))
+	fmt.Printf("  packages   : %s\n", countLabel(len(d.pacman)+len(d.aur), "to install", "already installed"))
+	fmt.Printf("  new files  : %s\n", countLabel(len(d.fresh), "to create", "none"))
+	fmt.Printf("  conflicts  : %s\n", countLabel(len(d.conflicts), "need a decision", "none"))
+	fmt.Printf("  leftovers  : %s\n", countLabel(len(d.stray), "not in the repo", "none"))
+	fmt.Printf("  bootstrap  : %s\n", countLabel(len(pending), "step(s) to run", "nothing pending"))
 }
 
 // pendingSteps lists the post-install work that has not already been done.
+//
+// Not cached across a run: applying the configs changes the answers — a step
+// whose check reads a file the repo has just written — so execute deliberately
+// asks again after the apply rather than trusting what the plan reported.
 func pendingSteps(selected []Component) []string {
 	var out []string
 	for _, c := range selected {

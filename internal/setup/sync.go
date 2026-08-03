@@ -11,6 +11,7 @@ import (
 	"os"
 	"sort"
 	"strings"
+	"sync"
 
 	"github.com/jrdriscoll17/hydra/internal/sys"
 )
@@ -116,7 +117,12 @@ func Status() error {
 		return err
 	}
 
-	printPlan(selected, drift.pacman, drift.aur, drift.fresh, drift.conflicts, drift.stray)
+	// Once, not once per use. Every bootstrap check shells out or hashes
+	// something — `fisher list` starts a fish, the render stamp is a sha256 of
+	// this binary — and this report asks for the answer three times over.
+	pending := pendingSteps(selected)
+
+	printPlan(selected, drift, pending)
 	printDetail("packages missing", append(drift.pacman, drift.aur...))
 	printDetail("config not yet on this machine", drift.fresh)
 	printDetail("config that differs from the repo", drift.conflicts)
@@ -124,7 +130,7 @@ func Status() error {
 		"from the committed one)", drift.themed)
 	printDetail("not in the repo, in a directory the repo owns (left over from "+
 		"an older version of it, and still being loaded)", drift.stray)
-	printDetail("bootstrap steps pending", pendingSteps(selected))
+	printDetail("bootstrap steps pending", pending)
 
 	// The system checks belong here more than anywhere: they are the part of
 	// this report that comes from asking the machine rather than from comparing
@@ -132,7 +138,7 @@ func Status() error {
 	// install — which is not the command anyone runs when something is wrong.
 	failed := printChecks(systemChecks(selectedKeys(selected)))
 
-	if drift.clean() && len(pendingSteps(selected)) == 0 && failed == 0 {
+	if drift.clean() && len(pending) == 0 && failed == 0 {
 		fmt.Println(okStyle.Render("\nin sync"))
 	} else {
 		fmt.Println(dimStyle.Render("\nrun `hydra sync` to bring this machine back in line"))
@@ -177,7 +183,7 @@ func Sync() error {
 	if err != nil {
 		return err
 	}
-	printPlan(selected, drift.pacman, drift.aur, drift.fresh, drift.conflicts, drift.stray)
+	printPlan(selected, drift, pendingSteps(selected))
 
 	decisions, err := resolveConflicts(drift.conflicts)
 	if err != nil {
@@ -215,19 +221,49 @@ func (d drift) clean() bool {
 }
 
 // survey works out everything that needs doing for the given components.
+//
+// The three questions it asks the machine — what pacman has, what chezmoi would
+// change, and what is left over in the directories the repo owns — do not depend
+// on each other, and each is a process start or two. Asking them together is
+// most of the difference between a status that reads instantly and one you wait
+// for: on a machine that is already in sync, this is the whole command.
 func survey(selected []Component) (drift, error) {
 	var d drift
-	var paths []string
+	var pkgs, aur, paths []string
 	for _, c := range selected {
-		d.pacman = append(d.pacman, missing(c.Packages)...)
-		d.aur = append(d.aur, missing(c.AUR)...)
+		pkgs = append(pkgs, c.Packages...)
+		aur = append(aur, c.AUR...)
 		paths = append(paths, c.Paths...)
 	}
 
-	states, err := scan(paths)
-	if err != nil {
-		return d, fmt.Errorf("reading chezmoi status: %w", err)
+	var (
+		wg        sync.WaitGroup
+		installed map[string]bool
+		states    map[string]FileState
+		scanErr   error
+	)
+	wg.Add(3)
+	go func() {
+		defer wg.Done()
+		installed = installedPackages()
+	}()
+	go func() {
+		defer wg.Done()
+		states, scanErr = scan(paths)
+	}()
+	go func() {
+		defer wg.Done()
+		d.stray = strays(selected)
+	}()
+	wg.Wait()
+
+	if scanErr != nil {
+		return d, fmt.Errorf("reading chezmoi status: %w", scanErr)
 	}
+
+	d.pacman = missing(pkgs, installed)
+	d.aur = missing(aur, installed)
+
 	for p, s := range states {
 		switch s {
 		case StateConflict:
@@ -240,7 +276,6 @@ func survey(selected []Component) (drift, error) {
 	// of the run rewrites those lines anyway, so applying the repo's version
 	// first would only undo and redo the same edit.
 	d.conflicts, d.themed = splitThemeDrift(d.conflicts)
-	d.stray = strays(selected)
 
 	sort.Strings(d.conflicts)
 	sort.Strings(d.fresh)

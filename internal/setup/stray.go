@@ -41,32 +41,45 @@ import (
 // generated output — which is ignored precisely because it must not be in the
 // repo — does not come back as a leftover. An unmanaged directory is reported
 // as itself rather than recursed into, which keeps a stale tree to one line.
+// One call covering every directory rather than one per directory: `chezmoi
+// unmanaged` takes as many paths as it is given, and the answer is the same
+// list. Starting chezmoi is most of what asking costs.
 func strays(components []Component) []string {
-	seen := map[string]bool{}
-	var out []string
-
+	scanned := map[string]bool{}
+	var dirs []string
 	for _, c := range components {
 		for _, dir := range c.Exclusive {
 			full := sys.InHome(dir)
-			if !sys.Exists(full) {
+			// A directory this machine does not have is not a directory full of
+			// leftovers, and naming it would make chezmoi fail for the lot.
+			if scanned[full] || !sys.Exists(full) {
 				continue
 			}
-			// An error here means chezmoi could not answer, which is not the
-			// same as "nothing is stray". Staying quiet is the right failure:
-			// this is a report, and a wrong one is worse than none.
-			listed, err := sys.Capture("chezmoi", "unmanaged", full)
-			if err != nil {
-				continue
-			}
-			for _, path := range strings.Split(listed, "\n") {
-				path = strings.TrimSpace(path)
-				if path == "" || seen[path] || isBackup(path) {
-					continue
-				}
-				seen[path] = true
-				out = append(out, path)
-			}
+			scanned[full] = true
+			dirs = append(dirs, full)
 		}
+	}
+	if len(dirs) == 0 {
+		return nil
+	}
+
+	// An error here means chezmoi could not answer, which is not the same as
+	// "nothing is stray". Staying quiet is the right failure: this is a report,
+	// and a wrong one is worse than none.
+	listed, err := sys.Capture("chezmoi", append([]string{"unmanaged"}, dirs...)...)
+	if err != nil {
+		return nil
+	}
+
+	seen := map[string]bool{}
+	var out []string
+	for _, path := range strings.Split(listed, "\n") {
+		path = strings.TrimSpace(path)
+		if path == "" || seen[path] || isBackup(path) {
+			continue
+		}
+		seen[path] = true
+		out = append(out, path)
 	}
 
 	sort.Strings(out)

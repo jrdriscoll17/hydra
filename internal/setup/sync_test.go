@@ -249,7 +249,11 @@ func TestMissingPackages(t *testing.T) {
 	if !sys.Have("pacman") {
 		t.Skip("no pacman on this machine")
 	}
-	got := missing([]string{"hydra-definitely-not-a-real-package"})
+	installed := installedPackages()
+	if len(installed) == 0 {
+		t.Fatal("installedPackages returned nothing; `pacman -Qq` should list this machine's packages")
+	}
+	got := missing([]string{"hydra-definitely-not-a-real-package"}, installed)
 	if len(got) != 1 {
 		t.Errorf("missing = %v, want the nonexistent package reported", got)
 	}

@@ -17,6 +17,7 @@ package setup
 import (
 	"os"
 	"strings"
+	"sync"
 
 	"github.com/jrdriscoll17/hydra/internal/sys"
 )
@@ -139,9 +140,27 @@ func containsString(haystack []string, needle string) bool {
 
 // splitThemeDrift separates the paths whose only difference is theme-owned from
 // the ones that genuinely need a decision.
+//
+// Asked in parallel because each answer costs a `chezmoi cat`, and these files
+// come as a set — a machine on a theme other than the committed one has all six
+// of them drifting at once, on every single run. Batching is not an option:
+// `chezmoi cat` given several paths concatenates the contents with nothing
+// between them, and not in the order it was asked.
 func splitThemeDrift(conflicts []string) (real, themed []string) {
-	for _, p := range conflicts {
-		if themeOwnedDrift(p) {
+	owned := make([]bool, len(conflicts))
+
+	var wg sync.WaitGroup
+	for i, p := range conflicts {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			owned[i] = themeOwnedDrift(p)
+		}()
+	}
+	wg.Wait()
+
+	for i, p := range conflicts {
+		if owned[i] {
 			themed = append(themed, p)
 		} else {
 			real = append(real, p)
