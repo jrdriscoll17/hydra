@@ -89,6 +89,13 @@ func catalog() []Component {
 			// which leaves which config is live up to the compositor's search
 			// order rather than to the repo.
 			Exclusive: []string{".config/hypr"},
+			Post: []Step{
+				// hyprland.lua loads the generated monitors.lua if it is there,
+				// so a machine that has never run this comes up on Hyprland's
+				// own automatic layout rather than on another machine's.
+				{Name: "record this machine's monitor layout",
+					Check: monitorsRecorded, Run: WriteMonitors},
+			},
 		},
 		{
 			Key:     "quickshell",

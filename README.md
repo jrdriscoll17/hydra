@@ -38,6 +38,7 @@ hydra sync            # pull the config repo and reapply
 | `hydra` | Pick components, install packages, apply configs, run bootstrap. Records the selection. |
 | `hydra status` | Report drift — missing packages, absent or differing config, leftovers the repo no longer has, pending bootstrap, failed system checks. Read-only. |
 | `hydra sync` | Pull the config repo and reapply, using the components this machine already opted into. |
+| `hydra monitors` | Record this machine's screen layout — the best mode each output advertises, at the position it is arranged in — to `~/.config/hypr/monitors.lua`, which `hyprland.lua` loads. Re-run after moving or replacing a screen. |
 | `hydra recolor <base> <#hex> <name>` | Build a Material-Black + Suru-GLOW theme pair in an arbitrary accent. |
 | `hydra theme <cmd>` | The theme switcher. Also reachable as `theme`. |
 
@@ -94,7 +95,7 @@ main.go            argv dispatch
 internal/sys       process, filesystem and text helpers
 internal/theme     palette · renderers · icon index · config editing · CLI
 internal/recolor   Material-Black + Suru-GLOW recolouring
-internal/setup     catalog · detection · bootstrap steps · theme assets · checks · TUI
+internal/setup     catalog · detection · monitors · bootstrap steps · theme assets · checks · TUI
 ```
 
 It is a multi-call binary: through a `theme` symlink `main()` dispatches to the
