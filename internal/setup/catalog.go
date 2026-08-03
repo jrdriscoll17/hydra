@@ -23,6 +23,13 @@ type Component struct {
 	// $HOME. These are what get applied (and what conflicts are reported on).
 	Paths []string
 
+	// Exclusive names the directories, among Paths, where the repo owns every
+	// file — so anything else found in one is a leftover from an older version
+	// of the repo rather than something the machine is entitled to have. Set it
+	// for directories that are loaded wholesale, where a stale file is not
+	// clutter but config that still runs. See stray.go.
+	Exclusive []string
+
 	// Post-install bootstrap, run once the config is in place.
 	Post []Step
 }
@@ -76,6 +83,12 @@ func catalog() []Component {
 				"udiskie", "playerctl", "wireplumber", "qt5-wayland", "qt6-wayland",
 			},
 			Paths: []string{".config/hypr"},
+			// Hyprland picks its config out of this directory by name, and the
+			// repo moved from hyprland.conf to hyprland.lua. A machine that
+			// applied the old one still has it sitting next to the new one,
+			// which leaves which config is live up to the compositor's search
+			// order rather than to the repo.
+			Exclusive: []string{".config/hypr"},
 		},
 		{
 			Key:     "quickshell",
@@ -84,6 +97,11 @@ func catalog() []Component {
 			Default: true,
 			AUR:     []string{"quickshell"},
 			Paths:   []string{".config/quickshell"},
+			// shell.qml resolves its imports against this directory, so QML
+			// files from the flat pre-refactor layout are still loadable from
+			// where they sit. The generated palette is .chezmoiignore'd and so
+			// is not reported here.
+			Exclusive: []string{".config/quickshell"},
 		},
 		{
 			// Ahead of the theme component deliberately: `theme apply` writes
@@ -142,6 +160,12 @@ func catalog() []Component {
 			Default:  true,
 			Packages: []string{"neovim", "tree-sitter-cli"},
 			Paths:    []string{".config/nvim"},
+			// The directory nvim reads is entirely the repo's: lazy.nvim
+			// imports every file under lua/plugins, and plugin/ and after/ are
+			// sourced on sight. Nothing here is state — that lives under
+			// ~/.local/{share,state}/nvim — so a file the repo does not have is
+			// config from a previous version of it, still running.
+			Exclusive: []string{".config/nvim"},
 			Post: []Step{
 				{Name: "sync lazy.nvim plugins", Check: lazySynced, Run: syncLazy},
 			},

@@ -36,7 +36,7 @@ hydra sync            # pull the config repo and reapply
 |---|---|
 | `hydra init [repo]` | Clone the config repo, `chezmoi init`, create the `theme` symlink. Defaults to the repo in `sync.go`. |
 | `hydra` | Pick components, install packages, apply configs, run bootstrap. Records the selection. |
-| `hydra status` | Report drift — missing packages, absent or differing config, pending bootstrap. Read-only. |
+| `hydra status` | Report drift — missing packages, absent or differing config, leftovers the repo no longer has, pending bootstrap, failed system checks. Read-only. |
 | `hydra sync` | Pull the config repo and reapply, using the components this machine already opted into. |
 | `hydra recolor <base> <#hex> <name>` | Build a Material-Black + Suru-GLOW theme pair in an arbitrary accent. |
 | `hydra theme <cmd>` | The theme switcher. Also reachable as `theme`. |
@@ -62,6 +62,30 @@ When a config already exists and differs from the repo, hydra stops and asks, pe
 file: show the diff, keep yours, back yours up and take the repo's, or overwrite.
 Answer once and it offers to apply the same choice to the rest. Backups land
 beside the original as `<name>.before-setup`.
+
+## Files the repo used to have
+
+chezmoi writes the files its source describes and nothing else, so deleting a
+file from the repo does not delete it from the machines that already applied it.
+Usually that leaves dead weight. In a directory something loads wholesale it
+leaves live config: a plugin spec dropped from the repo is still imported by
+lazy.nvim, a QML file from an older layout is still resolvable by the bar, an old
+`hyprland.conf` still sits next to the `hyprland.lua` that replaced it. The
+machine keeps behaving like the version of the repo it had years ago, on that
+machine alone, and every check says it is in sync.
+
+So a catalog entry can mark directories `Exclusive`, meaning the repo owns every
+file in them. Anything else found there is reported by `hydra status` and, on
+`hydra sync`, offered up to be moved aside — renamed to `<name>.before-setup`,
+never deleted.
+
+Some drift cannot be seen in a file at all. Neovim is the case that prompted
+this: `lua/theme.lua` names a colorscheme, but what the editor ends up on is
+whatever called `colorscheme` last, so a leftover spec ends with the editor
+ignoring theme switches while every other application follows them, silently.
+The check for it starts nvim and asks. Anything short of a straight
+contradiction passes — a check that fires when it cannot tell gets ignored, and
+then so does the real one.
 
 ## Layout
 

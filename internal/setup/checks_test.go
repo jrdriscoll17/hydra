@@ -1,6 +1,7 @@
 package setup
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -15,6 +16,92 @@ func checkNamed(checks []Check, fragment string) (Check, bool) {
 		}
 	}
 	return Check{}, false
+}
+
+// nvimStub puts an `nvim` on PATH that answers the colorscheme probe with the
+// given name. An empty name stands for a probe that answers nothing; exit
+// makes it fail outright.
+func nvimStub(t *testing.T, name string, exit int) {
+	t.Helper()
+	dir := t.TempDir()
+	script := fmt.Sprintf("#!/bin/sh\nprintf '%%s' '%s'\nexit %d\n", name, exit)
+	if err := os.WriteFile(filepath.Join(dir, "nvim"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+}
+
+// The failure this exists for: every application on the machine follows the
+// theme switch except the editor, with no error anywhere and nothing on disk
+// looking wrong.
+func TestEditorThemeCheckCatchesAnEditorOnTheWrongColorscheme(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	palette(t, home, "ice", "Material-Black-IceBlue", "MB-IceBlue-Suru-GLOW", "", "#7fd8e8")
+	nvimStub(t, "onedark", 0)
+
+	checks := editorThemeCheck()
+	if len(checks) != 1 {
+		t.Fatalf("got %d checks, want one", len(checks))
+	}
+	if checks[0].OK {
+		t.Error("check passed with nvim on a colorscheme the palette does not name")
+	}
+	// The fix has to name both ends of the contradiction, or it says no more
+	// than "something is wrong with your editor".
+	for _, want := range []string{"onedark", "\"n\"", "ice"} {
+		if !strings.Contains(checks[0].Fix, want) {
+			t.Errorf("fix text %q does not mention %q", checks[0].Fix, want)
+		}
+	}
+}
+
+func TestEditorThemeCheckPassesWhenTheEditorAgrees(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	palette(t, home, "ice", "Material-Black-IceBlue", "MB-IceBlue-Suru-GLOW", "", "#7fd8e8")
+	nvimStub(t, "n", 0)
+
+	checks := editorThemeCheck()
+	if len(checks) != 1 || !checks[0].OK {
+		t.Errorf("checks = %+v, want one passing check", checks)
+	}
+}
+
+// Not being able to ask is not the same as a wrong answer. A check that reports
+// a problem whenever it cannot tell gets ignored, and then the real one is
+// missed too.
+func TestEditorThemeCheckStaysQuietWhenItCannotTell(t *testing.T) {
+	cases := map[string]struct {
+		name string
+		exit int
+	}{
+		"nvim fails to start":   {"", 1},
+		"probe answers nothing": {"", 0},
+		"no colorscheme set":    {"nil", 0},
+	}
+	for label, c := range cases {
+		t.Run(label, func(t *testing.T) {
+			home := t.TempDir()
+			t.Setenv("HOME", home)
+			palette(t, home, "ice", "Material-Black-IceBlue", "MB-IceBlue-Suru-GLOW", "", "#7fd8e8")
+			nvimStub(t, c.name, c.exit)
+
+			if checks := editorThemeCheck(); len(checks) != 0 {
+				t.Errorf("checks = %+v, want none when the editor cannot be asked", checks)
+			}
+		})
+	}
+}
+
+// No palettes on this machine means nothing to compare against.
+func TestEditorThemeCheckStaysQuietWithoutAPalette(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	nvimStub(t, "onedark", 0)
+
+	if checks := editorThemeCheck(); len(checks) != 0 {
+		t.Errorf("checks = %+v, want none without a palette to compare against", checks)
+	}
 }
 
 func TestThemeAssetChecks(t *testing.T) {

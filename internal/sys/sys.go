@@ -4,6 +4,7 @@
 package sys
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"os"
@@ -11,6 +12,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"time"
 )
 
 // Home is the user's home directory, falling back to $HOME if the lookup fails.
@@ -52,6 +54,33 @@ func Capture(name string, args ...string) (string, error) {
 
 	err := cmd.Run()
 	out := strings.TrimSpace(stdout.String())
+	if err != nil {
+		if msg := strings.TrimSpace(stderr.String()); msg != "" {
+			return out, fmt.Errorf("%w: %s", err, msg)
+		}
+	}
+	return out, err
+}
+
+// CaptureWithin is Capture with a deadline.
+//
+// For commands hydra only asks a question of, where a slow answer is no more
+// use than no answer. Starting an editor or a shell runs the user's whole
+// config, and a config can sit at a prompt forever — waiting on that would hang
+// a status report that is supposed to be read-only and quick.
+func CaptureWithin(limit time.Duration, name string, args ...string) (string, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), limit)
+	defer cancel()
+
+	cmd := exec.CommandContext(ctx, name, args...)
+	var stdout, stderr strings.Builder
+	cmd.Stdout, cmd.Stderr = &stdout, &stderr
+
+	err := cmd.Run()
+	out := strings.TrimSpace(stdout.String())
+	if ctx.Err() != nil {
+		return out, fmt.Errorf("%s did not answer within %s", name, limit)
+	}
 	if err != nil {
 		if msg := strings.TrimSpace(stderr.String()); msg != "" {
 			return out, fmt.Errorf("%w: %s", err, msg)

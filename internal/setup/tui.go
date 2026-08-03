@@ -3,6 +3,7 @@ package setup
 import (
 	"errors"
 	"fmt"
+	"path/filepath"
 	"sort"
 	"strings"
 
@@ -53,7 +54,7 @@ func Run() error {
 	if err != nil {
 		return err
 	}
-	printPlan(selected, d.pacman, d.aur, d.fresh, d.conflicts)
+	printPlan(selected, d.pacman, d.aur, d.fresh, d.conflicts, d.stray)
 
 	decisions, err := resolveConflicts(d.conflicts)
 	if err != nil {
@@ -61,11 +62,16 @@ func Run() error {
 	}
 	apply, backups := partition(d.fresh, decisions)
 
+	leftovers, err := resolveStrays(d.stray)
+	if err != nil {
+		return err
+	}
+
 	var proceed bool
 	if err := huh.NewForm(huh.NewGroup(
 		huh.NewConfirm().
 			Title("Apply this plan?").
-			Description(planSummary(d.pacman, d.aur, apply, backups)).
+			Description(planSummary(d.pacman, d.aur, apply, backups, leftovers)).
 			Affirmative("Install").
 			Negative("Cancel").
 			Value(&proceed),
@@ -77,7 +83,7 @@ func Run() error {
 		return nil
 	}
 
-	if err := execute(selected, d.pacman, d.aur, apply, backups); err != nil {
+	if err := execute(selected, d.pacman, d.aur, apply, backups, leftovers); err != nil {
 		return err
 	}
 
@@ -232,6 +238,46 @@ func resolveConflicts(conflicts []string) (map[string]Resolution, error) {
 	return decisions, nil
 }
 
+// resolveStrays asks what to do about files in the repo's own directories that
+// the repo does not contain, and returns the ones to move aside.
+//
+// One question for the lot rather than one per file, unlike a conflict: there
+// is no per-file judgement to make here. A conflict is two versions of a file
+// the user might have edited on purpose; a stray is a file the repo dropped,
+// and the only reason to keep one is that it was never the repo's to begin
+// with — in which case its directory should not have been marked exclusive.
+func resolveStrays(paths []string) ([]string, error) {
+	if len(paths) == 0 {
+		return nil, nil
+	}
+
+	fmt.Println(warnStyle.Render(fmt.Sprintf(
+		"\n%d file(s) sit in directories the repo owns but are not in it:", len(paths))))
+	for _, p := range paths {
+		fmt.Println("  " + p)
+	}
+	fmt.Println(dimStyle.Render(
+		"  These are left over from an older version of the repo. chezmoi never\n" +
+			"  removes them, and anything that loads a whole directory — lazy.nvim,\n" +
+			"  Quickshell, Hyprland — still loads them."))
+
+	var move bool
+	if err := huh.NewForm(huh.NewGroup(
+		huh.NewConfirm().
+			Title("Move them aside?").
+			Description("Each is renamed to <name>.before-setup. Nothing is deleted.").
+			Affirmative("Move aside").
+			Negative("Leave them").
+			Value(&move),
+	)).Run(); err != nil {
+		return nil, err
+	}
+	if !move {
+		return nil, nil
+	}
+	return paths, nil
+}
+
 // partition turns the conflict decisions into the list of paths to apply and
 // the list to back up first. Files the user kept are simply left out.
 func partition(fresh []string, decisions map[string]Resolution) (apply, backups []string) {
@@ -252,7 +298,7 @@ func partition(fresh []string, decisions map[string]Resolution) (apply, backups 
 	return apply, backups
 }
 
-func execute(selected []Component, pacman, aur, apply, backups []string) error {
+func execute(selected []Component, pacman, aur, apply, backups, leftovers []string) error {
 	step := func(name string) { fmt.Println("\n" + titleStyle.Render("▸ "+name)) }
 
 	if len(pacman) > 0 {
@@ -276,6 +322,25 @@ func execute(selected []Component, pacman, aur, apply, backups []string) error {
 				return fmt.Errorf("backing up %s: %w", p, err)
 			}
 			fmt.Printf("  %s → %s\n", p, p+".before-setup")
+		}
+	}
+
+	// Before the configs land, not after: the bootstrap at the end of this run
+	// starts the editor and re-renders the theme, and both should see the
+	// directory the repo describes rather than the one with the leftovers still
+	// in it.
+	if len(leftovers) > 0 {
+		step("Moving leftovers aside")
+		for _, p := range leftovers {
+			dst, err := clear(p)
+			if err != nil {
+				// Not fatal. A leftover that could not be moved leaves the
+				// machine in the state it was already in, and the rest of the
+				// run still improves on it.
+				fmt.Println(errStyle.Render("  " + err.Error()))
+				continue
+			}
+			fmt.Printf("  %s → %s\n", p, filepath.Base(dst))
 		}
 	}
 
@@ -307,24 +372,24 @@ func execute(selected []Component, pacman, aur, apply, backups []string) error {
 }
 
 func report(selected []Component) {
-	picked := map[string]bool{}
-	for _, c := range selected {
-		picked[c.Key] = true
+	printChecks(systemChecks(selectedKeys(selected)))
+	fmt.Println(okStyle.Render("\nsetup complete"))
+}
+
+// printChecks lists the system checks and spells out the fix for any that
+// failed, returning how many did.
+func printChecks(checks []Check) int {
+	if len(checks) == 0 {
+		return 0
 	}
 
-	checks := systemChecks(picked)
 	var failed []Check
-	for _, c := range checks {
-		if !c.OK {
-			failed = append(failed, c)
-		}
-	}
-
 	fmt.Println("\n" + titleStyle.Render("▸ System checks"))
 	for _, c := range checks {
 		mark := okStyle.Render("✓")
 		if !c.OK {
 			mark = warnStyle.Render("!")
+			failed = append(failed, c)
 		}
 		fmt.Printf("  %s %s\n", mark, c.Name)
 	}
@@ -335,13 +400,12 @@ func report(selected []Component) {
 			fmt.Printf("  %s\n    %s\n", c.Name, dimStyle.Render(c.Fix))
 		}
 	}
-
-	fmt.Println(okStyle.Render("\nsetup complete"))
+	return len(failed)
 }
 
 // -- presentation ------------------------------------------------------------
 
-func printPlan(selected []Component, pacman, aur, fresh, conflicts []string) {
+func printPlan(selected []Component, pacman, aur, fresh, conflicts, stray []string) {
 	fmt.Println("\n" + titleStyle.Render("▸ Plan"))
 	names := make([]string, 0, len(selected))
 	for _, c := range selected {
@@ -351,6 +415,7 @@ func printPlan(selected []Component, pacman, aur, fresh, conflicts []string) {
 	fmt.Printf("  packages   : %s\n", countLabel(len(pacman)+len(aur), "to install", "already installed"))
 	fmt.Printf("  new files  : %s\n", countLabel(len(fresh), "to create", "none"))
 	fmt.Printf("  conflicts  : %s\n", countLabel(len(conflicts), "need a decision", "none"))
+	fmt.Printf("  leftovers  : %s\n", countLabel(len(stray), "not in the repo", "none"))
 	fmt.Printf("  bootstrap  : %s\n", countLabel(len(pendingSteps(selected)), "step(s) to run", "nothing pending"))
 }
 
@@ -367,7 +432,7 @@ func pendingSteps(selected []Component) []string {
 	return out
 }
 
-func planSummary(pacman, aur, apply, backups []string) string {
+func planSummary(pacman, aur, apply, backups, leftovers []string) string {
 	var b strings.Builder
 	if n := len(pacman) + len(aur); n > 0 {
 		fmt.Fprintf(&b, "install %d package(s)\n", n)
@@ -377,6 +442,9 @@ func planSummary(pacman, aur, apply, backups []string) string {
 	}
 	if len(backups) > 0 {
 		fmt.Fprintf(&b, "back up %d existing file(s) first\n", len(backups))
+	}
+	if len(leftovers) > 0 {
+		fmt.Fprintf(&b, "move %d leftover file(s) aside\n", len(leftovers))
 	}
 	if b.Len() == 0 {
 		return "Nothing to install — this will only run the bootstrap checks."

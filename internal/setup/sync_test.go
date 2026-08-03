@@ -281,7 +281,7 @@ func TestExecuteRunsPendingStepsAndSkipsDoneOnes(t *testing.T) {
 	}}
 
 	out := quiet(t, func() {
-		if err := execute(selected, nil, nil, nil, nil); err != nil {
+		if err := execute(selected, nil, nil, nil, nil, nil); err != nil {
 			t.Errorf("execute: %v", err)
 		}
 	})
@@ -317,7 +317,7 @@ func TestExecuteContinuesAfterAFailedStep(t *testing.T) {
 	}}
 
 	out := quiet(t, func() {
-		if err := execute(selected, nil, nil, nil, nil); err != nil {
+		if err := execute(selected, nil, nil, nil, nil, nil); err != nil {
 			t.Errorf("execute returned %v; a failed bootstrap step should not abort it", err)
 		}
 	})
@@ -327,6 +327,45 @@ func TestExecuteContinuesAfterAFailedStep(t *testing.T) {
 	}
 	if !strings.Contains(out, "deliberate failure") {
 		t.Errorf("the failure was not reported:\n%s", out)
+	}
+}
+
+// A leftover has to be out of the way before the bootstrap at the end of the
+// run starts the editor and re-renders the theme: those are what would go on
+// loading it, and the run would then finish by reporting success on a machine
+// still in the broken state.
+func TestExecuteMovesLeftoversAsideBeforeBootstrapping(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	stale := filepath.Join(home, ".config/nvim/lua/plugins/onedark.lua")
+	writeFile(t, stale, "return {}\n")
+
+	var stillThere bool
+	selected := []Component{{
+		Key: "nvim",
+		Post: []Step{{
+			Name:  "sync lazy.nvim plugins",
+			Check: func() bool { return false },
+			Run: func() error {
+				stillThere = sys.Exists(stale)
+				return nil
+			},
+		}},
+	}}
+
+	quiet(t, func() {
+		err := execute(selected, nil, nil, nil, nil,
+			[]string{".config/nvim/lua/plugins/onedark.lua"})
+		if err != nil {
+			t.Errorf("execute: %v", err)
+		}
+	})
+
+	if stillThere {
+		t.Error("the bootstrap ran with the leftover still in the directory nvim loads")
+	}
+	if got := readFile(t, stale+".before-setup"); got != "return {}\n" {
+		t.Errorf("moved-aside contents = %q, want the file kept, not deleted", got)
 	}
 }
 
@@ -345,7 +384,7 @@ func TestExecuteBacksUpBeforeApplying(t *testing.T) {
 	t.Setenv("PATH", stubs+string(os.PathListSeparator)+os.Getenv("PATH"))
 
 	quiet(t, func() {
-		if err := execute(nil, nil, nil, []string{".tmux.conf"}, []string{".tmux.conf"}); err == nil {
+		if err := execute(nil, nil, nil, []string{".tmux.conf"}, []string{".tmux.conf"}, nil); err == nil {
 			t.Error("execute succeeded despite chezmoi apply failing")
 		}
 	})

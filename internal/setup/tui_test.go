@@ -120,7 +120,7 @@ func TestCountLabel(t *testing.T) {
 
 func TestPlanSummary(t *testing.T) {
 	t.Run("nothing to do", func(t *testing.T) {
-		got := planSummary(nil, nil, nil, nil)
+		got := planSummary(nil, nil, nil, nil, nil)
 		if !strings.Contains(got, "Nothing to install") {
 			t.Errorf("planSummary = %q, want it to say there is nothing to install", got)
 		}
@@ -128,7 +128,7 @@ func TestPlanSummary(t *testing.T) {
 
 	t.Run("everything at once", func(t *testing.T) {
 		got := planSummary([]string{"fish", "tmux"}, []string{"quickshell"},
-			[]string{".config/nvim", ".tmux.conf"}, []string{".tmux.conf"})
+			[]string{".config/nvim", ".tmux.conf"}, []string{".tmux.conf"}, nil)
 
 		for _, want := range []string{"3 package(s)", "2 config path(s)", "1 existing file(s)"} {
 			if !strings.Contains(got, want) {
@@ -138,7 +138,7 @@ func TestPlanSummary(t *testing.T) {
 	})
 
 	t.Run("packages only", func(t *testing.T) {
-		got := planSummary([]string{"fish"}, nil, nil, nil)
+		got := planSummary([]string{"fish"}, nil, nil, nil, nil)
 		if !strings.Contains(got, "1 package(s)") {
 			t.Errorf("planSummary = %q", got)
 		}
@@ -148,7 +148,7 @@ func TestPlanSummary(t *testing.T) {
 	})
 
 	t.Run("no trailing newline", func(t *testing.T) {
-		got := planSummary([]string{"fish"}, nil, []string{".x"}, nil)
+		got := planSummary([]string{"fish"}, nil, []string{".x"}, nil, nil)
 		if strings.HasSuffix(got, "\n") {
 			t.Errorf("planSummary = %q, want it trimmed", got)
 		}

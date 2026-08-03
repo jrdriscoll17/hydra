@@ -7,6 +7,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestHomeAndInHome(t *testing.T) {
@@ -101,6 +102,45 @@ func TestCapture(t *testing.T) {
 	if _, err := Capture("hydra-definitely-not-a-real-binary"); err == nil {
 		t.Error("Capture of a missing binary returned nil error")
 	}
+}
+
+func TestCaptureWithin(t *testing.T) {
+	t.Run("answers in time", func(t *testing.T) {
+		out, err := CaptureWithin(5*time.Second, "printf", "  hello  ")
+		if err != nil {
+			t.Fatalf("CaptureWithin: %v", err)
+		}
+		if out != "hello" {
+			t.Errorf("CaptureWithin = %q, want %q", out, "hello")
+		}
+	})
+
+	// The point of the deadline: a command that never returns must not hang the
+	// caller. A status report is supposed to be quick and read-only, and the
+	// configs this starts can sit at a prompt indefinitely.
+	t.Run("gives up on a command that will not finish", func(t *testing.T) {
+		start := time.Now()
+		_, err := CaptureWithin(100*time.Millisecond, "sleep", "30")
+		if err == nil {
+			t.Fatal("returned nil error for a command that outlived the deadline")
+		}
+		if !strings.Contains(err.Error(), "did not answer") {
+			t.Errorf("error = %q, want it to say the command did not answer in time", err)
+		}
+		if elapsed := time.Since(start); elapsed > 5*time.Second {
+			t.Errorf("waited %s, want it to give up at the deadline", elapsed)
+		}
+	})
+
+	t.Run("failures carry stderr", func(t *testing.T) {
+		_, err := CaptureWithin(5*time.Second, "sh", "-c", "echo 'the actual reason' >&2; exit 1")
+		if err == nil {
+			t.Fatal("returned nil error")
+		}
+		if !strings.Contains(err.Error(), "the actual reason") {
+			t.Errorf("error = %q, want it to include the message on stderr", err)
+		}
+	})
 }
 
 func TestQuiet(t *testing.T) {

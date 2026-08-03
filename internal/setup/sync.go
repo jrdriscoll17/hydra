@@ -116,20 +116,37 @@ func Status() error {
 		return err
 	}
 
-	printPlan(selected, drift.pacman, drift.aur, drift.fresh, drift.conflicts)
+	printPlan(selected, drift.pacman, drift.aur, drift.fresh, drift.conflicts, drift.stray)
 	printDetail("packages missing", append(drift.pacman, drift.aur...))
 	printDetail("config not yet on this machine", drift.fresh)
 	printDetail("config that differs from the repo", drift.conflicts)
 	printDetail("theme-owned lines, left alone (this machine's theme differs "+
 		"from the committed one)", drift.themed)
+	printDetail("not in the repo, in a directory the repo owns (left over from "+
+		"an older version of it, and still being loaded)", drift.stray)
 	printDetail("bootstrap steps pending", pendingSteps(selected))
 
-	if drift.clean() && len(pendingSteps(selected)) == 0 {
+	// The system checks belong here more than anywhere: they are the part of
+	// this report that comes from asking the machine rather than from comparing
+	// files, and they were previously only ever printed at the end of a full
+	// install — which is not the command anyone runs when something is wrong.
+	failed := printChecks(systemChecks(selectedKeys(selected)))
+
+	if drift.clean() && len(pendingSteps(selected)) == 0 && failed == 0 {
 		fmt.Println(okStyle.Render("\nin sync"))
 	} else {
 		fmt.Println(dimStyle.Render("\nrun `hydra sync` to bring this machine back in line"))
 	}
 	return nil
+}
+
+// selectedKeys is the component set in the form systemChecks wants it.
+func selectedKeys(selected []Component) map[string]bool {
+	picked := map[string]bool{}
+	for _, c := range selected {
+		picked[c.Key] = true
+	}
+	return picked
 }
 
 // Sync pulls the config repo and reapplies, so a change made on one machine
@@ -160,7 +177,7 @@ func Sync() error {
 	if err != nil {
 		return err
 	}
-	printPlan(selected, drift.pacman, drift.aur, drift.fresh, drift.conflicts)
+	printPlan(selected, drift.pacman, drift.aur, drift.fresh, drift.conflicts, drift.stray)
 
 	decisions, err := resolveConflicts(drift.conflicts)
 	if err != nil {
@@ -168,7 +185,12 @@ func Sync() error {
 	}
 	apply, backups := partition(drift.fresh, decisions)
 
-	return execute(selected, drift.pacman, drift.aur, apply, backups)
+	leftovers, err := resolveStrays(drift.stray)
+	if err != nil {
+		return err
+	}
+
+	return execute(selected, drift.pacman, drift.aur, apply, backups, leftovers)
 }
 
 // drift is what separates this machine from the repo.
@@ -180,11 +202,16 @@ type drift struct {
 	// theme switcher rewrites — expected on any machine running a theme other
 	// than whichever was committed, and not something to ask about.
 	themed []string
+
+	// stray are files in the repo's own directories that the repo does not
+	// contain: config from an older version of it that chezmoi left behind and
+	// nothing else looks for. See stray.go.
+	stray []string
 }
 
 func (d drift) clean() bool {
 	return len(d.pacman) == 0 && len(d.aur) == 0 &&
-		len(d.fresh) == 0 && len(d.conflicts) == 0
+		len(d.fresh) == 0 && len(d.conflicts) == 0 && len(d.stray) == 0
 }
 
 // survey works out everything that needs doing for the given components.
@@ -213,6 +240,7 @@ func survey(selected []Component) (drift, error) {
 	// of the run rewrites those lines anyway, so applying the repo's version
 	// first would only undo and redo the same edit.
 	d.conflicts, d.themed = splitThemeDrift(d.conflicts)
+	d.stray = strays(selected)
 
 	sort.Strings(d.conflicts)
 	sort.Strings(d.fresh)
