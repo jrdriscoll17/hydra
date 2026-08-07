@@ -170,6 +170,10 @@ func systemChecks(selected map[string]bool) []Check {
 		checks = append(checks, layoutCheck())
 	}
 
+	if selected["quickshell"] {
+		checks = append(checks, quickshellWatchCheck())
+	}
+
 	if selected["core"] {
 		// $SHELL reports whatever launched this process, which is not the login
 		// shell when hydra is run from a script or another shell. passwd is the
