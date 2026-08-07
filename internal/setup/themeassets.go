@@ -25,10 +25,32 @@ func variantOf(t *theme.Theme) string {
 	return strings.TrimPrefix(t.GTK.Theme, "Material-Black-")
 }
 
-// assetsBuilt reports whether a palette's GTK theme and icon set are on disk.
+// assetsBuilt reports whether a palette's GTK theme and icon set are on disk
+// *in the accent the palette currently asks for*.
+//
+// Presence alone used to be the whole test, which made editing a palette's
+// accent a silent half-change: the render pushed the new colour into nvim,
+// kitty, Quickshell and btop, while GTK and the icons kept the accent they were
+// derived in. On the machine where the edit was made that is easy to miss, and
+// on every other machine `hydra sync` skipped the rebuild — the directory was
+// there, so the step looked done. Reading the accent back off disk is what
+// makes a palette edit propagate the whole way.
 func assetsBuilt(t *theme.Theme) bool {
-	return sys.Exists(sys.InHome(".themes/"+t.GTK.Theme)) &&
-		sys.Exists(sys.InHome(".local/share/icons/"+t.GTK.Icons))
+	if !sys.Exists(sys.InHome(".themes/"+t.GTK.Theme)) ||
+		!sys.Exists(sys.InHome(".local/share/icons/"+t.GTK.Icons)) {
+		return false
+	}
+	want := t.Color("accent")
+	if want == "" {
+		return true // nothing to derive from; buildPaletteThemes skips it too
+	}
+	got, err := recolor.Accent(variantOf(t))
+	if err != nil {
+		// Installed but unreadable — treat as needing a rebuild rather than
+		// silently accepting it.
+		return false
+	}
+	return recolor.SameColour(got, want)
 }
 
 // palettes reads every theme definition, skipping any that will not parse.
@@ -214,9 +236,15 @@ func paletteThemesBuilt() bool {
 // buildPaletteThemes derives each palette's GTK theme and icon set from an
 // installed base, in the palette's own accent colour. This is what turns the
 // one upstream pair into the per-theme assets the switcher expects.
+//
+// It covers two cases now: a palette with no theme yet, and a palette whose
+// accent has moved since its theme was derived. The second re-derives the
+// variant from itself — the structure is already right and only the accent is
+// wrong, so it is its own best base. recolor stages the build beside the theme
+// and swaps, so base == name is fine.
 func buildPaletteThemes() error {
-	base := installedBase()
-	if base == "" {
+	fallback := installedBase()
+	if fallback == "" {
 		return errors.New("no Material-Black + Suru-GLOW pair to derive from")
 	}
 	for _, p := range palettes() {
@@ -227,12 +255,27 @@ func buildPaletteThemes() error {
 			fmt.Printf("    skipping %s: no accent colour in the palette\n", p.Name)
 			continue
 		}
-		fmt.Printf("    %s (%s from %s)\n", variantOf(p), p.Color("accent"), base)
+		base, rebuild := fallback, false
+		if variantInstalled(variantOf(p)) {
+			base, rebuild = variantOf(p), true
+		}
+		if rebuild {
+			fmt.Printf("    %s (re-deriving in %s)\n", variantOf(p), p.Color("accent"))
+		} else {
+			fmt.Printf("    %s (%s from %s)\n", variantOf(p), p.Color("accent"), base)
+		}
 		if err := recolor.Run(base, p.Color("accent"), variantOf(p)); err != nil {
 			return fmt.Errorf("recolouring %s: %w", variantOf(p), err)
 		}
 	}
 	return nil
+}
+
+// variantInstalled reports whether a variant has both halves on disk, in the
+// shape readBase needs to derive from it.
+func variantInstalled(variant string) bool {
+	return sys.Exists(sys.InHome(".themes/Material-Black-"+variant+"/gtk-3.0/gtk.css")) &&
+		sys.Exists(sys.InHome(".local/share/icons/MB-"+variant+"-Suru-GLOW/places/scalable/folder.svg"))
 }
 
 // installedBase returns the stem of any Material-Black + Suru-GLOW pair on
@@ -247,8 +290,7 @@ func installedBase() string {
 		if name == e.Name() {
 			continue
 		}
-		if sys.Exists(sys.InHome(".themes/"+e.Name()+"/gtk-3.0/gtk.css")) &&
-			sys.Exists(sys.InHome(".local/share/icons/MB-"+name+"-Suru-GLOW/places/scalable/folder.svg")) {
+		if variantInstalled(name) {
 			return name
 		}
 	}

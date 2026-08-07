@@ -613,6 +613,86 @@ func TestRunCanChainFromItsOwnOutput(t *testing.T) {
 	}
 }
 
+// Recolouring a variant in place — base and name the same — is how a palette
+// whose accent has moved gets re-derived, since the stale theme is the only
+// thing on disk that states the accent being mapped away from. Building
+// straight into dest could not express it: the old code removed dest first,
+// which deleted the source it was about to copy.
+func TestRunRecoloursInPlace(t *testing.T) {
+	fakeBase(t, "IceBlue")
+
+	if err := Run("IceBlue", "#67dbef", "IceBlue"); err != nil {
+		t.Fatalf("in-place Run: %v", err)
+	}
+
+	home := os.Getenv("HOME")
+	css := read(t, filepath.Join(home, ".themes/Material-Black-IceBlue/gtk-3.0/gtk.css"))
+	if !strings.Contains(css, "#67dbef") {
+		t.Errorf("the new accent was not applied:\n%s", css)
+	}
+	if strings.Contains(strings.ToLower(css), baseAccent) {
+		t.Errorf("the old accent survives:\n%s", css)
+	}
+
+	svg := read(t, filepath.Join(home, ".local/share/icons/MB-IceBlue-Suru-GLOW/places/scalable/folder.svg"))
+	if !strings.Contains(svg, "#67dbef") {
+		t.Errorf("the icon gradient was not recoloured:\n%s", svg)
+	}
+
+	// index.theme still names the variant it always did — an in-place rebuild
+	// renames nothing.
+	index := read(t, filepath.Join(home, ".themes/Material-Black-IceBlue/index.theme"))
+	if !strings.Contains(index, "Name=Material-Black-IceBlue") {
+		t.Errorf("index.theme lost its name:\n%s", index)
+	}
+
+	for _, p := range []string{
+		".themes/Material-Black-IceBlue.building",
+		".local/share/icons/MB-IceBlue-Suru-GLOW.building",
+	} {
+		if _, err := os.Stat(filepath.Join(home, p)); err == nil {
+			t.Errorf("%s was left behind", p)
+		}
+	}
+}
+
+// A build that fails part way through must not replace the installed theme with
+// a half-recoloured one.
+func TestRunLeavesTheInstalledThemeAloneOnFailure(t *testing.T) {
+	fakeBase(t, "Teal")
+	home := os.Getenv("HOME")
+	before := read(t, filepath.Join(home, ".themes/Material-Black-Teal/gtk-3.0/gtk.css"))
+
+	if err := Run("Teal", "#67dbef", "Teal"); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	// Now break the icon half. readBase needs both halves, so buildGTK rejects
+	// the build before it copies anything — the GTK theme must not be left
+	// recoloured against an icon set that never got rebuilt.
+	//
+	// #ff00ff rather than something like #112233: the fixture sheet already
+	// carries a decoy colour, and asserting on one of those passes vacuously.
+	if err := os.RemoveAll(filepath.Join(home, ".local/share/icons/MB-Teal-Suru-GLOW")); err != nil {
+		t.Fatal(err)
+	}
+	if err := Run("Teal", "#ff00ff", "Teal"); err == nil {
+		t.Fatal("Run with no icon set returned nil error")
+	}
+	after := read(t, filepath.Join(home, ".themes/Material-Black-Teal/gtk-3.0/gtk.css"))
+	if strings.Contains(after, "#ff00ff") {
+		t.Errorf("a failed build still swapped its GTK half in:\n%s", after)
+	}
+	if !strings.Contains(after, "#67dbef") {
+		t.Errorf("the previous good build was lost:\n%s", after)
+	}
+	if len(after) != len(before) {
+		t.Errorf("the installed theme was damaged: %d bytes, was %d", len(after), len(before))
+	}
+	if _, err := os.Stat(filepath.Join(home, ".themes/Material-Black-Teal.building")); err == nil {
+		t.Error("the staging directory was left behind")
+	}
+}
+
 func TestRunRejectsABadColour(t *testing.T) {
 	fakeBase(t, "Teal")
 	if err := Run("Teal", "not-a-colour", "X"); err == nil {

@@ -34,8 +34,22 @@ type Ordered struct {
 	values map[string]string
 }
 
-func (o *Ordered) Get(k string) string { return o.values[k] }
-func (o *Ordered) Keys() []string      { return o.keys }
+// Nil-safe: a theme built by hand, or one whose JSON simply omits "colors",
+// leaves the field nil, and asking such a palette for a colour should answer
+// "it has not got one" rather than panic.
+func (o *Ordered) Get(k string) string {
+	if o == nil {
+		return ""
+	}
+	return o.values[k]
+}
+
+func (o *Ordered) Keys() []string {
+	if o == nil {
+		return nil
+	}
+	return o.keys
+}
 
 // UnmarshalJSON reads the object as a token stream so key order survives.
 func (o *Ordered) UnmarshalJSON(data []byte) error {

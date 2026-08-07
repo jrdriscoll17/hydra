@@ -26,13 +26,21 @@ func palette(t *testing.T, home, name, gtkTheme, icons, gtk4, accent string) {
 }
 
 // installPair puts a Material-Black + Suru-GLOW pair on disk, complete enough
-// for installedBase to accept it.
-func installPair(t *testing.T, home, variant string) {
+// for installedBase to accept it and for recolor.Accent to read `accent` back
+// out of it. The gtk.css states the accent twice against one decoy so it wins
+// on count, the way readBase picks it out of the real sheet.
+func installPair(t *testing.T, home, variant, accent string) {
 	t.Helper()
 	writeFile(t, filepath.Join(home, ".themes", "Material-Black-"+variant, "gtk-3.0", "gtk.css"),
-		"a{color:#00e5ce}")
+		"a{color:"+accent+"}b{border-color:"+accent+"}c{color:#112233}")
 	writeFile(t, filepath.Join(home, ".local/share/icons", "MB-"+variant+"-Suru-GLOW",
-		"places", "scalable", "folder.svg"), "<svg/>")
+		"places", "scalable", "folder.svg"),
+		`<svg xmlns="http://www.w3.org/2000/svg">`+
+			`<linearGradient id="oomox_gradient">`+
+			`<stop offset="0" style="stop-color:`+accent+`"/>`+
+			`<stop offset="1" style="stop-color:#007267"/>`+
+			`</linearGradient>`+
+			`<path fill="url(#oomox_gradient)" d="M0 0h10v10H0z"/></svg>`)
 }
 
 func TestVariantOf(t *testing.T) {
@@ -74,6 +82,73 @@ func TestAssetsBuilt(t *testing.T) {
 	}
 }
 
+// A theme whose accent no longer matches its palette is not built: the palette
+// moved, and the derived assets did not follow. Presence used to be the whole
+// test, which is how an accent edit reached nvim and the bar while GTK and the
+// icons silently kept the old colour on every machine.
+func TestAssetsBuiltChecksTheAccent(t *testing.T) {
+	newTheme := func(accent string) *theme.Theme {
+		home := t.TempDir()
+		t.Setenv("HOME", home)
+		palette(t, home, "ice", "Material-Black-IceBlue", "MB-IceBlue-Suru-GLOW", "", accent)
+		installPair(t, home, "IceBlue", "#7fd8e8")
+		got := palettes()
+		if len(got) != 1 {
+			t.Fatalf("palettes = %d entries, want 1", len(got))
+		}
+		return got[0]
+	}
+
+	if !assetsBuilt(newTheme("#7fd8e8")) {
+		t.Error("assetsBuilt = false when the installed accent matches the palette")
+	}
+	if assetsBuilt(newTheme("#67dbef")) {
+		t.Error("assetsBuilt = true when the palette's accent has moved since the build")
+	}
+	// Palettes are hand-edited; casing is not a difference.
+	if !assetsBuilt(newTheme("#7FD8E8")) {
+		t.Error("assetsBuilt = false on a case difference alone")
+	}
+}
+
+// The rebuild derives the variant from itself. Nothing else on disk states the
+// old accent, so the stale theme is the only thing that can be read for the
+// gradient stops it has to map away from.
+func TestBuildPaletteThemesRederivesAStaleAccent(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	installPair(t, home, "IceBlue", "#7fd8e8")
+	palette(t, home, "ice", "Material-Black-IceBlue", "MB-IceBlue-Suru-GLOW", "", "#67dbef")
+
+	if paletteThemesBuilt() {
+		t.Fatal("paletteThemesBuilt = true with a stale accent on disk")
+	}
+	if err := buildPaletteThemes(); err != nil {
+		t.Fatalf("buildPaletteThemes: %v", err)
+	}
+
+	css := readFile(t, filepath.Join(home, ".themes/Material-Black-IceBlue/gtk-3.0/gtk.css"))
+	if strings.Contains(css, "#7fd8e8") {
+		t.Errorf("gtk.css still carries the old accent: %s", css)
+	}
+	if !strings.Contains(css, "#67dbef") {
+		t.Errorf("gtk.css was not recoloured: %s", css)
+	}
+	if !paletteThemesBuilt() {
+		t.Error("paletteThemesBuilt = false after re-deriving")
+	}
+
+	// The swap must not leave its staging directory behind.
+	for _, p := range []string{
+		".themes/Material-Black-IceBlue.building",
+		".local/share/icons/MB-IceBlue-Suru-GLOW.building",
+	} {
+		if _, err := os.Stat(filepath.Join(home, p)); err == nil {
+			t.Errorf("%s was left behind", p)
+		}
+	}
+}
+
 func TestInstalledBase(t *testing.T) {
 	t.Run("nothing installed", func(t *testing.T) {
 		t.Setenv("HOME", t.TempDir())
@@ -85,7 +160,7 @@ func TestInstalledBase(t *testing.T) {
 	t.Run("a complete pair is found", func(t *testing.T) {
 		home := t.TempDir()
 		t.Setenv("HOME", home)
-		installPair(t, home, "IceBlue")
+		installPair(t, home, "IceBlue", "#00e5ce")
 
 		if got := installedBase(); got != "IceBlue" {
 			t.Errorf("installedBase = %q, want %q", got, "IceBlue")
@@ -121,7 +196,7 @@ func TestThemeBaseInstalled(t *testing.T) {
 	if themeBaseInstalled() {
 		t.Error("themeBaseInstalled = true on an empty HOME")
 	}
-	installPair(t, home, "IceBlue")
+	installPair(t, home, "IceBlue", "#00e5ce")
 	if !themeBaseInstalled() {
 		t.Error("themeBaseInstalled = false with a complete pair on disk")
 	}
@@ -137,12 +212,12 @@ func TestPaletteThemesBuilt(t *testing.T) {
 		t.Error("paletteThemesBuilt = true with no assets on disk")
 	}
 
-	installPair(t, home, "IceBlue")
+	installPair(t, home, "IceBlue", "#7fd8e8")
 	if paletteThemesBuilt() {
 		t.Error("paletteThemesBuilt = true with only one palette's assets built")
 	}
 
-	installPair(t, home, "Evergreen")
+	installPair(t, home, "Evergreen", "#a7c080")
 	if !paletteThemesBuilt() {
 		t.Error("paletteThemesBuilt = false with every palette's assets on disk")
 	}
@@ -375,16 +450,9 @@ func TestBuildPaletteThemesNeedsABase(t *testing.T) {
 func TestBuildPaletteThemesDerivesTheMissingOnes(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
-	installPair(t, home, "IceBlue")
+	installPair(t, home, "IceBlue", "#7fd8e8")
 	palette(t, home, "ice", "Material-Black-IceBlue", "MB-IceBlue-Suru-GLOW", "", "#7fd8e8")
 	palette(t, home, "ever", "Material-Black-Evergreen", "MB-Evergreen-Suru-GLOW", "", "#a7c080")
-
-	// The recolour reads the base's gradient out of folder.svg, so it needs the
-	// oomox structure rather than a stub.
-	writeFile(t, filepath.Join(home, ".local/share/icons/MB-IceBlue-Suru-GLOW/places/scalable/folder.svg"),
-		`<svg><linearGradient id="oomox">`+
-			`<stop style="stop-color:#00e5ce"/><stop style="stop-color:#007267"/>`+
-			`</linearGradient><path fill="url(#oomox)"/></svg>`)
 
 	if err := buildPaletteThemes(); err != nil {
 		t.Fatalf("buildPaletteThemes: %v", err)
@@ -406,11 +474,7 @@ func TestBuildPaletteThemesDerivesTheMissingOnes(t *testing.T) {
 func TestBuildPaletteThemesSkipsPalettesWithNoAccent(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
-	installPair(t, home, "IceBlue")
-	writeFile(t, filepath.Join(home, ".local/share/icons/MB-IceBlue-Suru-GLOW/places/scalable/folder.svg"),
-		`<svg><linearGradient id="oomox">`+
-			`<stop style="stop-color:#00e5ce"/><stop style="stop-color:#007267"/>`+
-			`</linearGradient><path fill="url(#oomox)"/></svg>`)
+	installPair(t, home, "IceBlue", "#7fd8e8")
 	palette(t, home, "ice", "Material-Black-IceBlue", "MB-IceBlue-Suru-GLOW", "", "#7fd8e8")
 	palette(t, home, "broken", "Material-Black-Broken", "MB-Broken-Suru-GLOW", "", "")
 

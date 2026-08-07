@@ -218,6 +218,36 @@ func readBase(base string) (baseColours, error) {
 	return baseColours{accent: accent, light: stops[0], dark: stops[1]}, nil
 }
 
+// Accent reports the accent colour an installed variant was built in, as a
+// lowercase "#rrggbb".
+//
+// The build is only ever derived from a palette, never recorded against it, so
+// the theme on disk is the only statement of which accent it carries. Setup
+// compares this with the palette to notice that a palette's accent has moved
+// since the theme was derived — a rebuild it would otherwise skip, because the
+// directory exists and nothing else distinguishes a stale one.
+func Accent(variant string) (string, error) {
+	colours, err := readBase(variant)
+	if err != nil {
+		return "", err
+	}
+	return colours.accent, nil
+}
+
+// SameColour reports whether two hex colours are the same, ignoring case and a
+// leading "#". Palettes are hand-edited, so "#67DBEF" and "67dbef" both turn up.
+func SameColour(a, b string) bool {
+	pa, err := parseHex(a)
+	if err != nil {
+		return false
+	}
+	pb, err := parseHex(b)
+	if err != nil {
+		return false
+	}
+	return pa == pb
+}
+
 // -- rewriting ---------------------------------------------------------------
 
 // recolourText does case-insensitive hex substitution; upstream mixes #00E5CE
@@ -324,19 +354,34 @@ var textSuffixes = map[string]bool{
 	".xml": true, ".themerc": true, ".theme": true,
 }
 
+// staging is where a build is assembled before it replaces dest.
+//
+// Building straight into dest cannot express base == name, and that is the
+// case that matters most: re-deriving an installed theme in a new accent. The
+// old code removed dest and then copied src into it, so recolouring a theme in
+// place deleted its own source. Assembling beside dest and renaming at the end
+// leaves src untouched until there is a complete build to swap in, which also
+// means a failure half way through no longer leaves a partly recoloured theme
+// installed.
+func staging(dest string) string { return dest + ".building" }
+
+// swap moves a finished build over dest. Same parent directory, so the rename
+// is atomic and cannot leave both.
+func swap(staged, dest string) error {
+	if err := os.RemoveAll(dest); err != nil {
+		return err
+	}
+	return os.Rename(staged, dest)
+}
+
 func buildGTK(base, name string, accent RGB) (string, error) {
 	src := sys.InHome(filepath.Join(".themes", "Material-Black-"+base))
 	if fi, err := os.Stat(src); err != nil || !fi.IsDir() {
 		return "", fmt.Errorf("%s is not installed", src)
 	}
-	dest := sys.InHome(filepath.Join(".themes", "Material-Black-"+name))
-	if err := os.RemoveAll(dest); err != nil {
-		return "", err
-	}
-	if err := sys.CopyTree(src, dest); err != nil {
-		return "", err
-	}
 
+	// Read the base before copying anything: a base that cannot be read should
+	// fail before the ~150MB tree walk, not after it.
 	colours, err := readBase(base)
 	if err != nil {
 		return "", err
@@ -345,13 +390,23 @@ func buildGTK(base, name string, accent RGB) (string, error) {
 	if err != nil {
 		return "", err
 	}
+
+	dest := sys.InHome(filepath.Join(".themes", "Material-Black-"+name))
+	staged := staging(dest)
+	defer os.RemoveAll(staged) // no-op once the swap has renamed it away
+	if err := os.RemoveAll(staged); err != nil {
+		return "", err
+	}
+	if err := sys.CopyTree(src, staged); err != nil {
+		return "", err
+	}
 	mapping := map[string]string{
 		colours.accent: toHex(float64(accent[0]), float64(accent[1]), float64(accent[2])),
 		// Hover/pressed states are drawn a step darker.
 		scaled(oldAccent, 0.8): scaled(accent, 0.8),
 	}
 
-	err = filepath.WalkDir(dest, func(path string, d os.DirEntry, err error) error {
+	err = filepath.WalkDir(staged, func(path string, d os.DirEntry, err error) error {
 		if err != nil || d.IsDir() {
 			return err
 		}
@@ -372,8 +427,10 @@ func buildGTK(base, name string, accent RGB) (string, error) {
 		return "", err
 	}
 
-	// index.theme names the theme to GTK; it has to match the directory.
-	index := filepath.Join(dest, "index.theme")
+	// index.theme names the theme to GTK; it has to match the directory. It
+	// carries the name on Name=, GtkTheme= and MetacityTheme=, so rewrite every
+	// mention rather than just the first. A no-op when base == name.
+	index := filepath.Join(staged, "index.theme")
 	if sys.Exists(index) {
 		if err := sys.Rewrite(index, func(t string) (string, bool) {
 			out := strings.ReplaceAll(t, "Material-Black-"+base, "Material-Black-"+name)
@@ -381,6 +438,10 @@ func buildGTK(base, name string, accent RGB) (string, error) {
 		}); err != nil {
 			return "", err
 		}
+	}
+
+	if err := swap(staged, dest); err != nil {
+		return "", err
 	}
 	return dest, nil
 }
@@ -390,14 +451,6 @@ func buildIcons(base, name string, accent RGB) (string, int, error) {
 	if fi, err := os.Stat(src); err != nil || !fi.IsDir() {
 		return "", 0, fmt.Errorf("%s is not installed", src)
 	}
-	dest := sys.InHome(filepath.Join(".local/share/icons", "MB-"+name+"-Suru-GLOW"))
-	if err := os.RemoveAll(dest); err != nil {
-		return "", 0, err
-	}
-	if err := sys.CopyTree(src, dest); err != nil {
-		return "", 0, err
-	}
-
 	colours, err := readBase(base)
 	if err != nil {
 		return "", 0, err
@@ -407,8 +460,18 @@ func buildIcons(base, name string, accent RGB) (string, int, error) {
 		colours.dark:  scaled(accent, 0.5),
 	}
 
+	dest := sys.InHome(filepath.Join(".local/share/icons", "MB-"+name+"-Suru-GLOW"))
+	staged := staging(dest)
+	defer os.RemoveAll(staged)
+	if err := os.RemoveAll(staged); err != nil {
+		return "", 0, err
+	}
+	if err := sys.CopyTree(src, staged); err != nil {
+		return "", 0, err
+	}
+
 	count := 0
-	err = filepath.WalkDir(dest, func(path string, d os.DirEntry, err error) error {
+	err = filepath.WalkDir(staged, func(path string, d os.DirEntry, err error) error {
 		if err != nil || d.IsDir() {
 			return err
 		}
@@ -431,7 +494,7 @@ func buildIcons(base, name string, accent RGB) (string, int, error) {
 		return "", 0, err
 	}
 
-	index := filepath.Join(dest, "index.theme")
+	index := filepath.Join(staged, "index.theme")
 	if sys.Exists(index) {
 		if err := sys.Rewrite(index, func(t string) (string, bool) {
 			out := sys.ReplaceFirst(nameRe, t, "Name=MB-"+name+"-Suru-GLOW")
@@ -445,6 +508,10 @@ func buildIcons(base, name string, accent RGB) (string, int, error) {
 			return "", 0, err
 		}
 	}
+
+	if err := swap(staged, dest); err != nil {
+		return "", 0, err
+	}
 	return dest, count, nil
 }
 
@@ -455,7 +522,12 @@ func Run(base, colour, name string) error {
 		return err
 	}
 	hex := toHex(float64(accent[0]), float64(accent[1]), float64(accent[2]))
-	fmt.Printf("recolour %s -> %s as %s\n", base, hex, name)
+	inPlace := base == name
+	if inPlace {
+		fmt.Printf("recolour %s -> %s\n", name, hex)
+	} else {
+		fmt.Printf("recolour %s -> %s as %s\n", base, hex, name)
+	}
 
 	gtk, err := buildGTK(base, name, accent)
 	if err != nil {
@@ -469,7 +541,11 @@ func Run(base, colour, name string) error {
 	}
 	fmt.Printf("  %s (%d icons)\n", icons, count)
 
-	fmt.Printf("\nPoint a theme at it:\n  \"theme\": \"Material-Black-%s\",\n  \"icons\": \"MB-%s-Suru-GLOW\"\n",
-		name, name)
+	// A re-derive is already pointed at by the palette that asked for it; the
+	// advice only helps when a *new* variant has just appeared.
+	if !inPlace {
+		fmt.Printf("\nPoint a theme at it:\n  \"theme\": \"Material-Black-%s\",\n  \"icons\": \"MB-%s-Suru-GLOW\"\n",
+			name, name)
+	}
 	return nil
 }
