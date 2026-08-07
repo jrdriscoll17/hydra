@@ -89,13 +89,22 @@ func catalog() []Component {
 			// which leaves which config is live up to the compositor's search
 			// order rather than to the repo.
 			Exclusive: []string{".config/hypr"},
-			Post: []Step{
-				// hyprland.lua loads the generated monitors.lua if it is there,
-				// so a machine that has never run this comes up on Hyprland's
-				// own automatic layout rather than on another machine's.
-				{Name: "record this machine's monitor layout",
-					Check: monitorsRecorded, Run: WriteMonitors},
-			},
+			// The monitor layout is deliberately NOT a post-install step.
+			//
+			// It was one, gated on the file's absence, and that is exactly the
+			// wrong moment to capture: sync applies configs before it runs its
+			// steps, so hyprland.lua — which by then loads a monitors.lua that
+			// does not exist yet — leaves Hyprland with no monitor rules at all.
+			// Hyprland auto-arranges, and the step then recorded that fallback
+			// as the machine's layout: scale 2 flattened to 1, the outputs
+			// reordered. Deterministic on any machine migrating off a hardcoded
+			// block, and it cost hypr-cachy its layout on 2026-08-07.
+			//
+			// A layout is a claim about where screens physically sit. hydra can
+			// only capture that at a moment the user has blessed, and bootstrap
+			// is never that moment. `hydra monitors` is the blessing; a fresh
+			// machine comes up on Hyprland's automatic layout until then, which
+			// is what it would have done anyway. layoutCheck reports it.
 		},
 		{
 			Key:     "quickshell",

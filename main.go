@@ -11,7 +11,7 @@
 //	hydra               choose components and install them
 //	hydra status        what has drifted on this machine; changes nothing
 //	hydra sync          pull the config repo and put this machine back in line
-//	hydra monitors      record this machine's screen layout for Hyprland
+//	hydra monitors [--force]  record this machine's screen layout for Hyprland
 //	hydra recolor …     build a Material-Black + Suru-GLOW pair
 //	hydra theme …       the theme switcher
 //
@@ -27,6 +27,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 
 	"github.com/charmbracelet/huh"
 
@@ -41,7 +42,8 @@ const usage = `hydra — keep your machines identical
   hydra               choose components and install them
   hydra status        what has drifted on this machine; changes nothing
   hydra sync          pull the config repo and reapply
-  hydra monitors      record this machine's screen layout for Hyprland
+  hydra monitors [--force]
+                      record this machine's screen layout for Hyprland
   hydra recolor <base> <#hex> <name>
   hydra theme <cmd>   the theme switcher (also reachable as ` + "`theme`" + `)`
 
@@ -60,7 +62,9 @@ func main() {
 		case "sync":
 			exit("sync", setup.Sync())
 		case "monitors":
-			exit("monitors", setup.Monitors())
+			// --force accepts a scale lower than the one already recorded;
+			// without it a re-capture never lowers one. See scaleFor.
+			exit("monitors", setup.Monitors(slices.Contains(os.Args[2:], "--force")))
 		case "theme":
 			exit("theme", theme.Main(os.Args[2:]))
 		case "recolor":

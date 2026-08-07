@@ -166,6 +166,10 @@ func systemChecks(selected map[string]bool) []Check {
 		})
 	}
 
+	if selected["hyprland"] {
+		checks = append(checks, layoutCheck())
+	}
+
 	if selected["core"] {
 		// $SHELL reports whatever launched this process, which is not the login
 		// shell when hydra is run from a script or another shell. passwd is the
