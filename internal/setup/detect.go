@@ -231,15 +231,34 @@ func ownedBy(path string, roots []string) bool {
 	return false
 }
 
+// targetPath makes a path chezmoi will resolve the same way from any directory.
+//
+// `chezmoi status` reports target paths relative to the target root, and
+// chezmoi resolves a relative argument against the *working directory*, not the
+// target root. Handing one straight back therefore only worked when hydra was
+// run from $HOME: anywhere else, `hydra sync` died on
+// "chezmoi: .config/hypr/hyprland.lua: not managed" the moment a file needed
+// applying. Absolute paths are unambiguous, and already-absolute ones pass
+// through untouched.
+func targetPath(path string) string {
+	if filepath.IsAbs(path) {
+		return path
+	}
+	return sys.InHome(path)
+}
+
 func applyPaths(paths []string) error {
 	if len(paths) == 0 {
 		return nil
 	}
-	args := append([]string{"apply"}, paths...)
+	args := []string{"apply"}
+	for _, p := range paths {
+		args = append(args, targetPath(p))
+	}
 	return sys.Run("chezmoi", args...)
 }
 
-func showDiff(path string) error { return sys.Run("chezmoi", "diff", path) }
+func showDiff(path string) error { return sys.Run("chezmoi", "diff", targetPath(path)) }
 
 func backup(path string) error {
 	full := sys.InHome(path)

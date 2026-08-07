@@ -42,6 +42,27 @@ func TestOwnedByNoRoots(t *testing.T) {
 	}
 }
 
+// chezmoi resolves a relative argument against the working directory, while
+// `chezmoi status` hands back paths relative to the target root. Passing one
+// straight back made `hydra sync` work from $HOME and fail everywhere else, on
+// "not managed" — so every path handed to chezmoi is anchored first.
+func TestTargetPath(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	if got, want := targetPath(".config/hypr/hyprland.lua"),
+		filepath.Join(home, ".config/hypr/hyprland.lua"); got != want {
+		t.Errorf("targetPath = %q, want %q", got, want)
+	}
+
+	// Already absolute: chezmoi needs no help, and rooting it again would
+	// produce nonsense like $HOME/home/jake/...
+	abs := filepath.Join(home, ".gtkrc-2.0")
+	if got := targetPath(abs); got != abs {
+		t.Errorf("targetPath(%q) = %q, want it unchanged", abs, got)
+	}
+}
+
 func TestParseStatus(t *testing.T) {
 	roots := []string{".config/nvim", ".config/fish", ".tmux.conf"}
 
